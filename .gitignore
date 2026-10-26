@@ -1,6 +1,7 @@
 # Dependencias y compilación
 node_modules/
 target/
+dist/
 *.class
 *.jar
 

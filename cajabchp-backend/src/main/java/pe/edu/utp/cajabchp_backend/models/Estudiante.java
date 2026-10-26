@@ -2,10 +2,9 @@ package pe.edu.utp.cajabchp_backend.models;
 
 import jakarta.persistence.*;
 import lombok.*;
-import org.hibernate.annotations.CreationTimestamp;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.Objects;
 
 @Entity
@@ -37,24 +36,23 @@ public class Estudiante {
     @Column(name = "telefono", length = 20)
     private String telefono;
 
-    @Column(name = "correo", length = 120)
+    @Column(name = "correo", length = 150)
     private String correo;
 
-    @Column(name = "promedio_notas", nullable = false, precision = 4, scale = 2)
+    @Column(name = "promedio_notas", precision = 4, scale = 2)
     private BigDecimal promedioNotas;
 
-    @Column(name = "porcentaje_asistencia", nullable = false, precision = 5, scale = 2)
+    @Column(name = "porcentaje_asistencia", precision = 5, scale = 2)
     private BigDecimal porcentajeAsistencia;
 
-    @Column(name = "estado_universidad", nullable = false, length = 20)
+    @Column(name = "estado_universidad", length = 20)
     private String estadoUniversidad;
 
-    @Column(name = "ciclo_actual", nullable = false)
+    @Column(name = "ciclo_actual")
     private Integer cicloActual;
 
-    @CreationTimestamp
-    @Column(name = "fecha_registro", updatable = false)
-    private LocalDateTime fechaRegistro;
+    @Column(name = "fecha_registro")
+    private LocalDate fechaRegistro;
 
     @Override
     public boolean equals(Object o) {

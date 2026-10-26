@@ -2,14 +2,13 @@ package pe.edu.utp.cajabchp_backend.models;
 
 import jakarta.persistence.*;
 import lombok.*;
-import org.hibernate.annotations.CreationTimestamp;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.Objects;
 
 @Entity
-@Table(name = "solicitudes")
+@Table(name = "solicitudes_prestamo")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -26,21 +25,26 @@ public class Solicitud {
     @JoinColumn(name = "id_estudiante", nullable = false)
     private Estudiante estudiante;
 
-    @Column(name = "monto_solicitado", nullable = false, precision = 12, scale = 2)
+    @Column(name = "monto_solicitado", nullable = false, precision = 10, scale = 2)
     private BigDecimal montoSolicitado;
 
     @Column(name = "cuotas_solicitadas", nullable = false)
     private Integer cuotasSolicitadas;
 
-    @Column(name = "estado_solicitud", nullable = false, length = 30)
+    @Column(name = "estado_solicitud", nullable = false, length = 20)
     private String estadoSolicitud;
 
-    @Column(name = "recomendacion_sistema", length = 200)
+    @Column(name = "recomendacion_sistema", length = 30)
     private String recomendacionSistema;
 
-    @CreationTimestamp
-    @Column(name = "fecha_solicitud", updatable = false)
-    private LocalDateTime fechaSolicitud;
+    @Column(name = "observacion", length = 255)
+    private String observacion;
+
+    @Column(name = "atendido_por", length = 50)
+    private String atendidoPor;
+
+    @Column(name = "fecha_solicitud")
+    private LocalDate fechaSolicitud;
 
     @Override
     public boolean equals(Object o) {

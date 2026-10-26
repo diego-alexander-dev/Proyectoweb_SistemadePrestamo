@@ -2,10 +2,9 @@ package pe.edu.utp.cajabchp_backend.models;
 
 import jakarta.persistence.*;
 import lombok.*;
-import org.hibernate.annotations.CreationTimestamp;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.Objects;
 
 @Entity
@@ -26,18 +25,20 @@ public class Pago {
     @JoinColumn(name = "id_prestamo", nullable = false)
     private Prestamo prestamo;
 
-    @Column(name = "monto", nullable = false, precision = 12, scale = 2)
+    @Column(name = "monto", nullable = false, precision = 10, scale = 2)
     private BigDecimal monto;
 
     @Column(name = "cuota_numero", nullable = false)
     private Integer cuotaNumero;
 
-    @Column(name = "metodo_pago", nullable = false, length = 50)
+    @Column(name = "metodo_pago", length = 30)
     private String metodoPago;
 
-    @CreationTimestamp
-    @Column(name = "fecha_pago", updatable = false)
-    private LocalDateTime fechaPago;
+    @Column(name = "fecha_pago")
+    private LocalDate fechaPago;
+
+    @Column(name = "estado", length = 20)
+    private String estado;
 
     @Override
     public boolean equals(Object o) {

@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.*;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 
 @Getter
 @Setter
@@ -37,5 +37,5 @@ public class SolicitudDTO {
     private String recomendacionSistema;
 
     @JsonProperty("fecha_solicitud")
-    private LocalDateTime fechaSolicitud;
+    private LocalDate fechaSolicitud;
 }
