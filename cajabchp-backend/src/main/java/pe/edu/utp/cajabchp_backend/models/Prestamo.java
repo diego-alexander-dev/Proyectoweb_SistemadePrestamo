@@ -49,6 +49,22 @@ public class Prestamo {
     @Column(name = "interes_mora", nullable = false, precision = 12, scale = 2)
     private BigDecimal interesMora;
 
+    @PrePersist
+    public void prePersist() {
+        if (this.fechaInicio == null) {
+            this.fechaInicio = LocalDate.now();
+        }
+        if (this.estado == null) {
+            this.estado = "Activo";
+        }
+        if (this.diasMora == null) {
+            this.diasMora = 0;
+        }
+        if (this.interesMora == null) {
+            this.interesMora = BigDecimal.ZERO;
+        }
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

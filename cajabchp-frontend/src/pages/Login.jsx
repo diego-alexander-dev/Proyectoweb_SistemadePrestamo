@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import BchpLogo from '../components/LogoBCHP';
+import { loginUser, BACKEND_ACTIVO } from '../services/api';
 
 const MAX_INTENTOS = 3;
 
@@ -14,42 +15,83 @@ const Login = () => {
   const [intentosFallidos, setIntentosFallidos] = useState(0);
   const bloqueado = intentosFallidos >= MAX_INTENTOS;
 
-  const validarAcceso = (e) => {
+  const validarAcceso = async (e) => {
     e.preventDefault();
     if (bloqueado) {
       setError('Acceso bloqueado por múltiples intentos fallidos. Reinicie el sistema.');
       return;
     }
 
+    const user = usuario.trim();
+    if (!user || !pass) {
+      setError('Ingrese su usuario y contraseña');
+      return;
+    }
+
     setCargando(true);
     setError('');
 
-    const user = usuario.trim();
+    if (BACKEND_ACTIVO) {
+      try {
+        const resp = await loginUser({ usuario: user, password: pass });
+        const data = resp.data;
+        sessionStorage.setItem('bchp_usuario', data.usuario);
+        sessionStorage.setItem('bchp_rol', data.rol);
+        sessionStorage.setItem('bchp_nombre', data.nombre);
+        setIntentosFallidos(0);
 
-    // Misma regla que Login.java: mismos usuarios/roles de prueba
-    setTimeout(() => {
-      if (user === 'admin' && pass === '1234') {
-        setIntentosFallidos(0);
-        navigate('/dashboard');
-      } else if (user === 'asistente' && pass === '1234') {
-        setIntentosFallidos(0);
-        navigate('/dashboard');
-      } else if (user.toUpperCase().startsWith('U') && pass === '123') {
-        setIntentosFallidos(0);
-        navigate('/portal-estudiante');
-      } else {
-        const fallidos = intentosFallidos + 1;
-        setIntentosFallidos(fallidos);
-        const restantes = MAX_INTENTOS - fallidos;
-        setError(
-          restantes > 0
-            ? `Credenciales incorrectas. Intentos restantes: ${restantes}`
-            : 'Has agotado los intentos permitidos. Acceso bloqueado.'
-        );
+        if (data.rol === 'ESTUDIANTE') {
+          navigate('/portal-estudiante');
+        } else {
+          navigate('/dashboard');
+        }
+      } catch (err) {
+        const msg = err.response?.data?.message || err.message || 'Credenciales incorrectas';
+        setError(msg);
+        if (msg.toLowerCase().includes('bloquead')) {
+          setIntentosFallidos(MAX_INTENTOS);
+        } else {
+          setIntentosFallidos(prev => prev + 1);
+        }
         setPass('');
+      } finally {
+        setCargando(false);
       }
-      setCargando(false);
-    }, 400);
+    } else {
+      // Modo desconectado / fallback local
+      setTimeout(() => {
+        if (user === 'admin' && pass === '1234') {
+          sessionStorage.setItem('bchp_usuario', 'admin');
+          sessionStorage.setItem('bchp_rol', 'ADMIN');
+          sessionStorage.setItem('bchp_nombre', 'Administrador Principal');
+          setIntentosFallidos(0);
+          navigate('/dashboard');
+        } else if (user === 'asistente' && pass === '1234') {
+          sessionStorage.setItem('bchp_usuario', 'asistente');
+          sessionStorage.setItem('bchp_rol', 'OPERADOR');
+          sessionStorage.setItem('bchp_nombre', 'Asistente de Créditos');
+          setIntentosFallidos(0);
+          navigate('/dashboard');
+        } else if (user.toUpperCase().startsWith('U') && pass === '123') {
+          sessionStorage.setItem('bchp_usuario', user.toUpperCase());
+          sessionStorage.setItem('bchp_rol', 'ESTUDIANTE');
+          sessionStorage.setItem('bchp_nombre', 'Estudiante ' + user.toUpperCase());
+          setIntentosFallidos(0);
+          navigate('/portal-estudiante');
+        } else {
+          const fallidos = intentosFallidos + 1;
+          setIntentosFallidos(fallidos);
+          const restantes = MAX_INTENTOS - fallidos;
+          setError(
+            restantes > 0
+              ? `Credenciales incorrectas. Intentos restantes: ${restantes}`
+              : 'Has agotado los intentos permitidos. Acceso bloqueado.'
+          );
+          setPass('');
+        }
+        setCargando(false);
+      }, 400);
+    }
   };
 
   return (

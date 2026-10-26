@@ -33,4 +33,9 @@ public class PagoController {
         PagoDTO creado = pagoService.registrarPago(dto);
         return ResponseEntity.status(HttpStatus.CREATED).body(creado);
     }
+
+    @PatchMapping("/{id}/anular")
+    public ResponseEntity<PagoDTO> anular(@PathVariable Long id) {
+        return ResponseEntity.ok(pagoService.anular(id));
+    }
 }

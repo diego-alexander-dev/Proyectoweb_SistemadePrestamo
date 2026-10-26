@@ -51,7 +51,7 @@ public class PrestamoMapper {
             .tasaInteres(dto.getTasaInteres())
             .saldo(dto.getSaldo())
             .estado("Activo")
-            .fechaInicio(LocalDate.now())
+            .fechaInicio(dto.getFechaInicio() != null ? dto.getFechaInicio() : LocalDate.now())
             .diasMora(0)
             .interesMora(BigDecimal.ZERO)
             .build();

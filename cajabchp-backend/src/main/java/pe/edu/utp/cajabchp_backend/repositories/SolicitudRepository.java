@@ -20,4 +20,6 @@ public interface SolicitudRepository extends JpaRepository<Solicitud, Long> {
 
     @Query("SELECT s FROM Solicitud s JOIN FETCH s.estudiante WHERE s.estadoSolicitud = :estado ORDER BY s.idSolicitud DESC")
     List<Solicitud> findByEstadoSolicitudWithEstudiante(@Param("estado") String estado);
+
+    boolean existsByEstudianteIdEstudiante(Long idEstudiante);
 }

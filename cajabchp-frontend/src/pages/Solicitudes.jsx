@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
-import { getSolicitudes, putSolicitudEstado } from '../services/api';
+import { getSolicitudes, putSolicitudEstado, getScoringEstudiante, BACKEND_ACTIVO } from '../services/api';
 import {
   Gauge,
   CheckCircle2,
@@ -44,9 +44,9 @@ const Solicitudes = () => {
 
   const [filtroEstado, setFiltroEstado] = useState('PENDIENTE');
   const [toast, setToast] = useState(null);
-  const [scoreModal, setScoreModal] = useState(null); // { solicitud, score, dictamen, color }
+  const [scoreModal, setScoreModal] = useState(null); // { solicitud, score, dictamen, color, tasa_sugerida, deuda_vigente }
   const [otpModal, setOtpModal] = useState(null); // { solicitud, token, restante, input, error }
-  const [contratoModal, setContratoModal] = useState(null); // { solicitud, firma, texto }
+  const [contratoModal, setContratoModal] = useState(null); // { solicitud, firma, texto, tasa }
   const otpTimerRef = useRef(null);
 
   useEffect(() => {
@@ -55,7 +55,10 @@ const Solicitudes = () => {
         const r = await getSolicitudes();
         if (r.data && r.data.length > 0) setSolicitudes(r.data);
       } catch (e) {
-        void e; // sin backend activo aún: se mantiene la data local de demostración
+        if (BACKEND_ACTIVO) {
+          const msg = e.response?.data?.message || 'Error al conectar con el servidor de solicitudes';
+          setToast({ tipo: 'error', texto: msg });
+        }
       }
     })();
   }, []);
@@ -66,20 +69,20 @@ const Solicitudes = () => {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // ===== Filtro por estado (igual que comboFiltroEstado + cargarSolicitudesYArbol) =====
+  // ===== Filtro por estado =====
   const solicitudesFiltradas = useMemo(
     () => solicitudes.filter((s) => s.estado_solicitud === filtroEstado),
     [solicitudes, filtroEstado]
   );
 
-  // ===== Agrupación por rendimiento (equivalente al JTree: ramaExcelente / ramaRegular) =====
+  // ===== Agrupación por rendimiento =====
   const altoRendimiento = solicitudesFiltradas.filter((s) => s.promedio >= 15.0);
   const regular = solicitudesFiltradas.filter((s) => s.promedio < 15.0);
 
   const contadorPorEstado = (estado) => solicitudes.filter((s) => s.estado_solicitud === estado).length;
 
-  // ===== Calcular Score (idéntico a calcularScoreFinanciero) =====
-  const calcularScore = (s) => {
+  // ===== Calcular Score (con tasa dinámica y deuda vigente del servidor) =====
+  const calcularScore = async (s) => {
     const ptsPromedio = (s.promedio / 20.0) * 40.0;
     const ptsAsistencia = (s.asistencia / 100.0) * 40.0;
     let ptsCiclo = 0;
@@ -87,28 +90,64 @@ const Solicitudes = () => {
     else if (s.ciclo >= 1 && s.ciclo <= 3) ptsCiclo = 15.0;
     else if (s.ciclo >= 8 && s.ciclo <= 10) ptsCiclo = 10.0;
 
-    const scoreTotal = Math.round(ptsPromedio + ptsAsistencia + ptsCiclo);
+    let scoreTotal = Math.round(ptsPromedio + ptsAsistencia + ptsCiclo);
+    let dictamen;
+    let color;
+    let tasaSugerida = s.promedio > 16.0 ? 8.0 : 10.0;
+    let deudaVigente = 0.0;
 
-    let dictamen, color;
     if (scoreTotal >= 80) { dictamen = 'EXCELENTE'; color = '#34d399'; }
     else if (scoreTotal >= 60) { dictamen = 'ACEPTABLE'; color = '#fbbf24'; }
     else { dictamen = 'CRÍTICO'; color = '#fb7185'; }
 
-    setScoreModal({ solicitud: s, score: scoreTotal, dictamen, color });
+    if (BACKEND_ACTIVO && s.id_estudiante) {
+      try {
+        const scRes = await getScoringEstudiante(s.id_estudiante);
+        if (scRes.data) {
+          scoreTotal = scRes.data.score;
+          dictamen = scRes.data.dictamen;
+          tasaSugerida = scRes.data.tasa_sugerida;
+          deudaVigente = scRes.data.deuda_vigente || 0.0;
+          if (scoreTotal >= 80) color = '#34d399';
+          else if (scoreTotal >= 60) color = '#fbbf24';
+          else color = '#fb7185';
+        }
+      } catch (err) {
+        void err;
+      }
+    }
+
+    setScoreModal({
+      solicitud: s,
+      score: scoreTotal,
+      dictamen,
+      color,
+      tasa_sugerida: tasaSugerida,
+      deuda_vigente: deudaVigente
+    });
   };
 
-  // ===== Actualiza estado (igual que modificarEstadoSolicitud, sin la parte de SQL) =====
+  // ===== Actualiza estado con validación estricta y tasa real del servidor =====
   const aplicarEstado = async (s, nuevoEstado) => {
-    setSolicitudes((prev) =>
-      prev.map((x) => (x.id_solicitud === s.id_solicitud ? { ...x, estado_solicitud: nuevoEstado } : x))
-    );
-    try {
-      await putSolicitudEstado(s.id_solicitud, { estado_solicitud: nuevoEstado });
-    } catch (e) {
-      void e; // sin backend activo: el cambio queda solo en memoria, igual que el resto del módulo
+    if (BACKEND_ACTIVO) {
+      try {
+        await putSolicitudEstado(s.id_solicitud, { estado_solicitud: nuevoEstado });
+        setSolicitudes((prev) =>
+          prev.map((x) => (x.id_solicitud === s.id_solicitud ? { ...x, estado_solicitud: nuevoEstado } : x))
+        );
+      } catch (e) {
+        const msg = e.response?.data?.message || 'No se pudo guardar en el servidor';
+        setToast({ tipo: 'error', texto: msg });
+        return; // Detiene sin modificar estado local si falla en servidor
+      }
+    } else {
+      setSolicitudes((prev) =>
+        prev.map((x) => (x.id_solicitud === s.id_solicitud ? { ...x, estado_solicitud: nuevoEstado } : x))
+      );
     }
 
     if (nuevoEstado === 'APROBADO') {
+      const tasaAsignada = s.promedio > 16.0 ? 8.0 : 10.0;
       const firma = await sha256Hex(`${s.nombreCompleto}${s.monto_solicitado}${s.id_solicitud}`);
       const texto =
         `SISTEMA BCHP - CONTRATO DE CRÉDITO EDUCATIVO\n\n` +
@@ -117,17 +156,18 @@ const Solicitudes = () => {
         `CONDICIONES DEL FINANCIAMIENTO:\n` +
         `- Monto Adjudicado: ${soles(s.monto_solicitado)}\n` +
         `- Plazo de Amortización: ${s.cuotas_solicitadas} meses.\n` +
+        `- Tasa de Interés Asignada: ${tasaAsignada.toFixed(2)}% anual (${s.promedio > 16 ? 'Tasa Excelencia Académica' : 'Tasa Base Universitaria'})\n` +
         `- Fecha de Aprobación: ${new Date().toLocaleDateString()}\n\n` +
         `El estudiante se compromete a cumplir con el cronograma de pagos establecido.\n\n` +
         `FIRMA DIGITAL Y AUDITORÍA:\n${firma}\n`;
-      setContratoModal({ solicitud: s, firma, texto });
-      setToast({ tipo: 'ok', texto: `${solId(s.id_solicitud)} aprobada. Contrato generado.` });
+      setContratoModal({ solicitud: s, firma, texto, tasa: tasaAsignada });
+      setToast({ tipo: 'ok', texto: `${solId(s.id_solicitud)} aprobada. Contrato generado con tasa ${tasaAsignada}%.` });
     } else {
       setToast({ tipo: 'warn', texto: `${solId(s.id_solicitud)} marcada como ${nuevoEstado}.` });
     }
   };
 
-  // ===== Aprobar: exige OTP si el monto >= umbral (igual que la validación original) =====
+  // ===== Aprobar: exige OTP si el monto >= umbral =====
   const iniciarAprobacion = async (s) => {
     if (s.monto_solicitado >= OTP_UMBRAL) {
       const generarToken = async () => {
@@ -367,6 +407,18 @@ const Solicitudes = () => {
               <div><span>Promedio académico</span><b>{((scoreModal.solicitud.promedio / 20) * 40).toFixed(1)} pts</b></div>
               <div><span>Asistencia</span><b>{((scoreModal.solicitud.asistencia / 100) * 40).toFixed(1)} pts</b></div>
               <div><span>Ciclo actual ({scoreModal.solicitud.ciclo})</span><b>{(scoreModal.score - ((scoreModal.solicitud.promedio / 20) * 40) - ((scoreModal.solicitud.asistencia / 100) * 40)).toFixed(1)} pts</b></div>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 6, marginTop: 4 }}>
+                <span>Tasa dinámica aplicable:</span>
+                <b style={{ color: scoreModal.tasa_sugerida <= 8 ? '#34d399' : 'var(--bx-or)' }}>
+                  {Number(scoreModal.tasa_sugerida || 10).toFixed(2)}% anual
+                </b>
+              </div>
+              <div>
+                <span>Deuda vigente activa:</span>
+                <b style={{ color: scoreModal.deuda_vigente > 0 ? '#fb7185' : '#34d399' }}>
+                  {soles(scoreModal.deuda_vigente)}
+                </b>
+              </div>
             </div>
           </div>
         </div>

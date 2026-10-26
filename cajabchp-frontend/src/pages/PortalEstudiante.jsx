@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BchpLogo from '../components/LogoBCHP';
-import { getEstudiantes, getPrestamos, getPagos } from '../services/api';
+import { getEstudiantes, getPrestamos, getPagos, BACKEND_ACTIVO } from '../services/api';
 import { 
   GraduationCap, 
   CreditCard, 
@@ -9,7 +9,8 @@ import {
   Clock, 
   LogOut, 
   Send, 
-  Wallet
+  Wallet,
+  AlertTriangle
 } from 'lucide-react';
 
 const soles = (n) => `S/. ${Number(n || 0).toFixed(2)}`;
@@ -17,42 +18,54 @@ const soles = (n) => `S/. ${Number(n || 0).toFixed(2)}`;
 const PortalEstudiante = () => {
   const navigate = useNavigate();
 
-  // Datos del estudiante en sesión (U21304921 - Diego Huachaca)
-  const [estudiante, setEstudiante] = useState({
-    id_estudiante: 1,
-    dni: '12345678',
-    nombre: 'DIEGO',
-    apellido: 'HUACHACA',
-    correo: 'diego.huachaca@utp.edu.pe',
-    ciclo_actual: 5,
-    promedio_notas: 16.5,
-    porcentaje_asistencia: 92.0,
-    estado_universidad: 'ACTIVO'
-  });
+  // Datos del estudiante en sesión
+  const [estudiante, setEstudiante] = useState(
+    BACKEND_ACTIVO
+      ? { id_estudiante: null, dni: '', nombre: 'ESTUDIANTE', apellido: '', correo: '', ciclo_actual: 1, promedio_notas: 0, porcentaje_asistencia: 0, estado_universidad: 'ACTIVO' }
+      : {
+          id_estudiante: 1,
+          dni: '12345678',
+          nombre: 'DIEGO',
+          apellido: 'HUACHACA',
+          correo: 'diego.huachaca@utp.edu.pe',
+          ciclo_actual: 5,
+          promedio_notas: 16.5,
+          porcentaje_asistencia: 92.0,
+          estado_universidad: 'ACTIVO'
+        }
+  );
 
-  const [prestamos, setPrestamos] = useState([
-    {
-      id_prestamo: 1,
-      monto: 5000.00,
-      cuotas: 12,
-      tasa_interes: 10.00,
-      saldo: 5500.00,
-      estado: 'Activo',
-      fecha_inicio: '2026-09-02',
-      dias_mora: 0,
-      interes_mora: 0.00
-    }
-  ]);
+  const [prestamos, setPrestamos] = useState(
+    BACKEND_ACTIVO
+      ? []
+      : [
+          {
+            id_prestamo: 1,
+            monto: 5000.00,
+            cuotas: 12,
+            tasa_interes: 10.00,
+            saldo: 5500.00,
+            estado: 'Activo',
+            fecha_inicio: '2026-09-02',
+            dias_mora: 0,
+            interes_mora: 0.00
+          }
+        ]
+  );
 
-  const [pagos, setPagos] = useState([
-    {
-      id_pago: 4,
-      monto: 458.33,
-      cuota_numero: 1,
-      metodo_pago: 'TRANSFERENCIA BCP',
-      fecha_pago: '2026-09-10'
-    }
-  ]);
+  const [pagos, setPagos] = useState(
+    BACKEND_ACTIVO
+      ? []
+      : [
+          {
+            id_pago: 4,
+            monto: 458.33,
+            cuota_numero: 1,
+            metodo_pago: 'TRANSFERENCIA BCP',
+            fecha_pago: '2026-09-10'
+          }
+        ]
+  );
 
   const [solicitudEnviada, setSolicitudEnviada] = useState(false);
   const [nuevaSolicitud, setNuevaSolicitud] = useState({
@@ -74,14 +87,14 @@ const PortalEstudiante = () => {
       try {
         const resPrest = await getPrestamos();
         if (resPrest.data && resPrest.data.length > 0) {
-          setPrestamos(resPrest.data.slice(0, 2));
+          setPrestamos(resPrest.data.slice(0, 5));
         }
       } catch (e) { void e; }
 
       try {
         const resPagos = await getPagos();
         if (resPagos.data && resPagos.data.length > 0) {
-          setPagos(resPagos.data.slice(0, 3));
+          setPagos(resPagos.data.slice(0, 5));
         }
       } catch (e) { void e; }
     })();
@@ -96,7 +109,7 @@ const PortalEstudiante = () => {
     }, 4000);
   };
 
-  const prestamoActivo = prestamos.find(p => p.estado === 'Activo') || prestamos[0];
+  const prestamoActivo = prestamos.find(p => p.estado === 'Activo' || p.estado === 'Riesgo Temprano') || prestamos[0];
 
   return (
     <div style={{ minHeight: '100vh', background: '#0b0b0d', color: '#f4f4f5', padding: '24px 32px' }}>
@@ -183,13 +196,39 @@ const PortalEstudiante = () => {
 
           {/* Préstamo Activo */}
           <div className="bx-c">
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <CreditCard size={18} color="var(--bx-or)" />
-              Mi Crédito Educativo Vigente
-            </h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                <CreditCard size={18} color="var(--bx-or)" />
+                Mi Crédito Educativo Vigente
+              </h3>
+              {prestamoActivo && (
+                <span className={`bx-b ${prestamoActivo.estado === 'Riesgo Temprano' ? 'bx-b-yl' : 'bx-b-gr'}`}>
+                  {prestamoActivo.estado}
+                </span>
+              )}
+            </div>
 
             {prestamoActivo ? (
               <div>
+                {prestamoActivo.estado === 'Riesgo Temprano' && (
+                  <div style={{
+                    background: 'rgba(251,191,36,0.12)',
+                    border: '1px solid rgba(251,191,36,0.35)',
+                    color: '#fbbf24',
+                    padding: '12px 14px',
+                    borderRadius: '10px',
+                    fontSize: '13px',
+                    marginBottom: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}>
+                    <AlertTriangle size={18} />
+                    <div>
+                      <b>Alerta de Riesgo Temprano:</b> Tienes una cuota que vence el día de mañana. Realiza tu pago hoy para evitar penalidades y recargos por mora.
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '18px' }}>
                   <div style={{ background: '#141418', padding: '14px', borderRadius: '12px' }}>
                     <div style={{ fontSize: '11px', color: 'var(--bx-mu)' }}>Monto Otorgado</div>

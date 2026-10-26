@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import Sidebar from '../components/Sidebar';
 import { useNavigate } from 'react-router-dom';
-import { getEstudiantes, getPrestamos, getPagos } from '../services/api';
+import { getEstudiantes, getPrestamos, getPagos, BACKEND_ACTIVO } from '../services/api';
+import { AlertTriangle } from 'lucide-react';
 
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const soles = (n) => `S/ ${Number(n || 0).toLocaleString('es-PE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -15,45 +16,50 @@ const Dashboard = () => {
   const [prestamos, setPrestamos] = useState([]);
   const [pagos, setPagos] = useState([]);
   const [cargando, setCargando] = useState(true);
-  const [vistaChip, setVistaChip] = useState('ingresos'); // antes: botones sin onClick, no hacían nada
+  const [errorAviso, setErrorAviso] = useState('');
+  const [vistaChip, setVistaChip] = useState('ingresos');
 
   useEffect(() => {
     (async () => {
       try {
         const r = await getEstudiantes();
         if (r.data) setEstudiantes(r.data);
-      } catch (e) { void e; }
+      } catch (e) {
+        if (BACKEND_ACTIVO) setErrorAviso(e.response?.data?.message || 'No se pudo cargar estudiantes desde el servidor');
+      }
       try {
         const r = await getPrestamos();
         if (r.data) setPrestamos(r.data);
-      } catch (e) { void e; }
+      } catch (e) {
+        if (BACKEND_ACTIVO) setErrorAviso(e.response?.data?.message || 'No se pudo cargar préstamos desde el servidor');
+      }
       try {
         const r = await getPagos();
         if (r.data) setPagos(r.data);
-      } catch (e) { void e; }
+      } catch (e) {
+        if (BACKEND_ACTIVO) setErrorAviso(e.response?.data?.message || 'No se pudo cargar amortizaciones desde el servidor');
+      }
       setCargando(false);
     })();
   }, []);
 
-  // ===== KPIs reales (antes hardcodeados: 148 / 52 / S/ 64.500 / S/ 11.280) =====
-  const prestamosVigentes = prestamos.filter((p) => p.estado === 'Activo');
+  // Préstamos vigentes tratan "Activo" y "Riesgo Temprano"
+  const prestamosVigentes = prestamos.filter((p) => p.estado === 'Activo' || p.estado === 'Riesgo Temprano');
+  const prestamosRiesgoTemprano = prestamos.filter((p) => p.estado === 'Riesgo Temprano');
   const fondoOtorgado = prestamos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
   const cuotasPorCobrar = prestamosVigentes.reduce((s, p) => s + (Number(p.saldo) || 0), 0);
 
   const kpis = [
     { label: 'Estudiantes registrados', value: String(estudiantes.length), note: 'Padrón activo', cls: 'bx-k' },
-    { label: 'Préstamos vigentes', value: String(prestamosVigentes.length), note: 'Con cronograma', cls: 'bx-k' },
+    { label: 'Préstamos vigentes', value: String(prestamosVigentes.length), note: 'Activo + Riesgo Temprano', cls: 'bx-k' },
     { label: 'Fondo otorgado', value: soles(fondoOtorgado), note: 'Suma histórica desembolsada', cls: 'bx-k' },
-    { label: 'Cuotas por cobrar', value: soles(cuotasPorCobrar), note: 'Saldo de préstamos activos', cls: 'bx-k', orange: true },
+    { label: 'Cuotas por cobrar', value: soles(cuotasPorCobrar), note: 'Saldo de cartera vigente', cls: 'bx-k', orange: true },
   ];
 
-  // ===== Últimos préstamos: reales, ya no hay campo "carrera" en el modelo de datos =====
-  // (estudiantes no tiene carrera en su ficha, así que se cambió esa columna por "Inicio")
   const ultimosPrestamos = [...prestamos]
     .sort((a, b) => Number(b.id_prestamo) - Number(a.id_prestamo))
     .slice(0, 5);
 
-  // ===== Serie mensual real (últimos 6 meses): colocaciones (prestamos) vs recaudación (pagos) =====
   const { serieColoc, serieRecau, maxSerie } = useMemo(() => {
     const hoy = new Date();
     const claves = [];
@@ -92,6 +98,13 @@ const Dashboard = () => {
   const totalDestacado = vistaChip === 'egresos' ? totalColocadoSerie : totalRecaudadoSerie;
   const etiquetaDestacada = vistaChip === 'egresos' ? 'Colocado' : 'Recaudado';
 
+  const badgeEstadoClase = (estado) => {
+    if (estado === 'Activo') return 'bx-b-gr';
+    if (estado === 'Riesgo Temprano') return 'bx-b-am';
+    if (estado === 'Pagado') return 'bx-b-bl';
+    return 'bx-b-rd';
+  };
+
   return (
     <div className="bx-app" translate="no">
       <Sidebar />
@@ -106,6 +119,27 @@ const Dashboard = () => {
             + Nuevo préstamo
           </button>
         </div>
+
+        {errorAviso && (
+          <div className="bx-c" style={{ borderLeft: '4px solid var(--bx-rd)', padding: '12px 18px' }}>
+            <span style={{ color: 'var(--bx-rd)', fontWeight: 600 }}>Aviso: </span>
+            <span>{errorAviso}</span>
+          </div>
+        )}
+
+        {/* Alerta de préstamos en Riesgo Temprano */}
+        {prestamosRiesgoTemprano.length > 0 && (
+          <div className="bx-c" style={{ borderLeft: '4px solid var(--bx-am)', background: 'rgba(255,176,32,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <AlertTriangle size={20} color="var(--bx-am)" />
+              <div>
+                <strong style={{ color: 'var(--bx-am)' }}>Atención: {prestamosRiesgoTemprano.length} préstamo(s) en Riesgo Temprano</strong>
+                <div className="bx-k">Tienen cuotas que vencen mañana. Se recomienda contactar al estudiante antes de que incurra en mora.</div>
+              </div>
+            </div>
+            <button className="bx-chip on" onClick={() => navigate('/prestamos')}>Ver préstamos</button>
+          </div>
+        )}
 
         <div className="bx-g bx-g4">
           {kpis.map((k) => (
@@ -174,8 +208,8 @@ const Dashboard = () => {
             <div className="bx-k" style={{ marginBottom: 14 }}>
               Fondo habilitado para matrícula y cuotas del período lectivo.
             </div>
-            <div className="bx-li"><span>Interés social fijado</span><b>1,5% mensual</b></div>
-            <div className="bx-li"><span>Plazo máximo</span><b>Hasta 6 meses</b></div>
+            <div className="bx-li"><span>Interés social fijado</span><b>10% / 8% excelencia</b></div>
+            <div className="bx-li"><span>En Riesgo Temprano</span><b style={{ color: 'var(--bx-am)' }}>{prestamosRiesgoTemprano.length} préstamos</b></div>
             <div className="bx-li"><span>Saldo activo en cartera</span><b style={{ color: 'var(--bx-gr)' }}>{soles(cuotasPorCobrar)}</b></div>
           </div>
         </div>
@@ -212,7 +246,7 @@ const Dashboard = () => {
                     <td style={{ textAlign: 'left' }}>{soles(p.monto)}</td>
                     <td style={{ textAlign: 'left' }}>{p.cuotas}</td>
                     <td>
-                      <span className={`bx-b ${p.estado === 'Activo' ? 'bx-b-gr' : 'bx-b-bl'}`}>{p.estado}</span>
+                      <span className={`bx-b ${badgeEstadoClase(p.estado)}`}>{p.estado}</span>
                     </td>
                   </tr>
                 ))}

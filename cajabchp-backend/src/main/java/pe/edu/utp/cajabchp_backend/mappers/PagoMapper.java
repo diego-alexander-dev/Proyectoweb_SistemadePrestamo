@@ -14,10 +14,20 @@ public class PagoMapper {
 
         Long idPrestamo = null;
         String dni = null;
+        Integer cuotaNumero = entity.getCuotaNumero();
 
-        if (entity.getPrestamo() != null) {
+        if (entity.getCuota() != null) {
+            cuotaNumero = entity.getCuota().getNumeroCuota();
+            if (entity.getCuota().getPrestamo() != null) {
+                idPrestamo = entity.getCuota().getPrestamo().getIdPrestamo();
+                if (entity.getCuota().getPrestamo().getEstudiante() != null) {
+                    dni = entity.getCuota().getPrestamo().getEstudiante().getDni();
+                }
+            }
+        }
+        if (idPrestamo == null && entity.getPrestamo() != null) {
             idPrestamo = entity.getPrestamo().getIdPrestamo();
-            if (entity.getPrestamo().getEstudiante() != null) {
+            if (dni == null && entity.getPrestamo().getEstudiante() != null) {
                 dni = entity.getPrestamo().getEstudiante().getDni();
             }
         }
@@ -27,7 +37,7 @@ public class PagoMapper {
             .idPrestamo(idPrestamo)
             .dni(dni)
             .monto(entity.getMonto())
-            .cuotaNumero(entity.getCuotaNumero())
+            .cuotaNumero(cuotaNumero)
             .metodoPago(entity.getMetodoPago())
             .fechaPago(entity.getFechaPago())
             .build();

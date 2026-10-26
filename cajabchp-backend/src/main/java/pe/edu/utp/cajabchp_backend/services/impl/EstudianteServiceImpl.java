@@ -10,6 +10,8 @@ import pe.edu.utp.cajabchp_backend.exception.ResourceNotFoundException;
 import pe.edu.utp.cajabchp_backend.mappers.EstudianteMapper;
 import pe.edu.utp.cajabchp_backend.models.Estudiante;
 import pe.edu.utp.cajabchp_backend.repositories.EstudianteRepository;
+import pe.edu.utp.cajabchp_backend.repositories.PrestamoRepository;
+import pe.edu.utp.cajabchp_backend.repositories.SolicitudRepository;
 import pe.edu.utp.cajabchp_backend.services.EstudianteService;
 
 import java.util.List;
@@ -20,6 +22,8 @@ import java.util.Objects;
 public class EstudianteServiceImpl implements EstudianteService {
 
     private final EstudianteRepository estudianteRepository;
+    private final PrestamoRepository prestamoRepository;
+    private final SolicitudRepository solicitudRepository;
     private final EstudianteMapper estudianteMapper;
 
     @Override
@@ -27,7 +31,10 @@ public class EstudianteServiceImpl implements EstudianteService {
     public List<EstudianteDTO> listarTodos() {
         return estudianteRepository.findAllByOrderByIdEstudianteDesc()
             .stream()
-            .map(estudianteMapper::toDTO)
+            .map(e -> {
+                boolean riesgo = prestamoRepository.existsByEstudianteIdEstudianteAndEstado(e.getIdEstudiante(), "Riesgo Temprano");
+                return estudianteMapper.toDTO(e, riesgo);
+            })
             .toList();
     }
 
@@ -37,7 +44,8 @@ public class EstudianteServiceImpl implements EstudianteService {
         Objects.requireNonNull(id, "El ID de estudiante no puede ser nulo");
         Estudiante estudiante = estudianteRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Estudiante con ID " + id + " no encontrado"));
-        return estudianteMapper.toDTO(estudiante);
+        boolean riesgo = prestamoRepository.existsByEstudianteIdEstudianteAndEstado(estudiante.getIdEstudiante(), "Riesgo Temprano");
+        return estudianteMapper.toDTO(estudiante, riesgo);
     }
 
     @Override
@@ -51,7 +59,7 @@ public class EstudianteServiceImpl implements EstudianteService {
 
         Estudiante nuevo = estudianteMapper.toEntity(dto);
         Estudiante guardado = estudianteRepository.save(nuevo);
-        return estudianteMapper.toDTO(guardado);
+        return estudianteMapper.toDTO(guardado, false);
     }
 
     @Override
@@ -81,7 +89,8 @@ public class EstudianteServiceImpl implements EstudianteService {
         estudiante.setCicloActual(dto.getCicloActual());
 
         Estudiante actualizado = estudianteRepository.save(estudiante);
-        return estudianteMapper.toDTO(actualizado);
+        boolean riesgo = prestamoRepository.existsByEstudianteIdEstudianteAndEstado(actualizado.getIdEstudiante(), "Riesgo Temprano");
+        return estudianteMapper.toDTO(actualizado, riesgo);
     }
 
     @Override
@@ -91,6 +100,15 @@ public class EstudianteServiceImpl implements EstudianteService {
         if (!estudianteRepository.existsById(id)) {
             throw new ResourceNotFoundException("Estudiante con ID " + id + " no encontrado");
         }
+
+        if (prestamoRepository.existsByEstudianteIdEstudiante(id)) {
+            throw new BusinessRuleException("No se puede eliminar el estudiante porque tiene préstamos asociados en el sistema");
+        }
+
+        if (solicitudRepository.existsByEstudianteIdEstudiante(id)) {
+            throw new BusinessRuleException("No se puede eliminar el estudiante porque tiene solicitudes asociadas en el sistema");
+        }
+
         estudianteRepository.deleteById(id);
     }
 }

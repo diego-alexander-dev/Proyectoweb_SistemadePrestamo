@@ -1,11 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
-import { getPrestamos, getEstudiantes, getPagos, postPago } from '../services/api';
-import { Search, Loader2, CheckCircle2, AlertCircle, Wallet } from 'lucide-react';
+import { 
+  getPrestamos, 
+  getEstudiantes, 
+  getPagos, 
+  postPago, 
+  getCuotasPrestamo, 
+  anularPago, 
+  BACKEND_ACTIVO 
+} from '../services/api';
+import { Search, Loader2, CheckCircle2, AlertCircle, Wallet, Ban, Coins } from 'lucide-react';
 
 const METODOS = ['YAPE', 'PLIN', 'TRANSFERENCIA BCP', 'PAGOEFECTIVO'];
-const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-const CIRC = 464.9;
 
 const haceMeses = (n, dia) => {
   const d = new Date();
@@ -20,62 +26,164 @@ const codPago = (id) => `PAG-${String(id).padStart(4, '0')}`;
 
 const Amortizaciones = () => {
   const montoRef = useRef(null);
+  const rolUsuario = sessionStorage.getItem('bchp_rol') || 'OPERADOR';
+  const esAdmin = rolUsuario === 'ADMIN';
 
   const [prestamos, setPrestamos] = useState([
     { id_prestamo: 1, id_estudiante: 1, estudiante_nombre: 'DIEGO HUACHACA', monto: 5000.0, cuotas: 12, tasa_interes: 10.0, saldo: 5500.0, estado: 'Activo', dias_mora: 0 },
     { id_prestamo: 2, id_estudiante: 1, estudiante_nombre: 'DIEGO HUACHACA', monto: 1000.0, cuotas: 3, tasa_interes: 10.0, saldo: 1100.0, estado: 'Activo', dias_mora: 0 },
-    { id_prestamo: 3, id_estudiante: 2, estudiante_nombre: 'DIANA APOLINARIO', monto: 2000.0, cuotas: 6, tasa_interes: 10.0, saldo: 2200.0, estado: 'Activo', dias_mora: 5 },
-    { id_prestamo: 10, id_estudiante: 10, estudiante_nombre: 'VALERIA GUTIERREZ', monto: 5000.0, cuotas: 12, tasa_interes: 10.0, saldo: 0.0, estado: 'Pagado', dias_mora: 0 }
+    { id_prestamo: 3, id_estudiante: 2, estudiante_nombre: 'DIANA APOLINARIO', monto: 2000.0, cuotas: 6, tasa_interes: 10.0, saldo: 2200.0, estado: 'Riesgo Temprano', dias_mora: 0 },
   ]);
 
   const [estudiantesLista, setEstudiantesLista] = useState([
     { id_estudiante: 1, nombre: 'DIEGO', apellido: 'HUACHACA', dni: '12345678' },
     { id_estudiante: 2, nombre: 'DIANA', apellido: 'APOLINARIO', dni: '87654321' },
-    { id_estudiante: 10, nombre: 'VALERIA', apellido: 'GUTIERREZ', dni: '88776655' }
   ]);
 
   const [pagos, setPagos] = useState([
-    { id_pago: 1, id_prestamo: 10, dni: '88776655', monto: 458.33, cuota_numero: 11, metodo_pago: 'PAGOEFECTIVO', fecha_pago: haceMeses(4, 12) },
-    { id_pago: 2, id_prestamo: 10, dni: '88776655', monto: 458.33, cuota_numero: 12, metodo_pago: 'YAPE', fecha_pago: haceMeses(3, 15) },
-    { id_pago: 3, id_prestamo: 3, dni: '87654321', monto: 366.67, cuota_numero: 1, metodo_pago: 'PLIN', fecha_pago: haceMeses(2, 8) },
-    { id_pago: 4, id_prestamo: 1, dni: '12345678', monto: 458.33, cuota_numero: 1, metodo_pago: 'TRANSFERENCIA BCP', fecha_pago: haceMeses(1, 10) }
+    { id_pago: 1, id_prestamo: 1, dni: '12345678', monto: 458.33, cuota_numero: 1, metodo_pago: 'TRANSFERENCIA BCP', fecha_pago: haceMeses(1, 10) }
   ]);
 
-  useEffect(() => {
-    const cargar = async () => {
-      try {
-        const r = await getPrestamos();
-        if (r.data && r.data.length > 0) setPrestamos(r.data);
-      } catch (e) { void e; }
-      try {
-        const r = await getEstudiantes();
-        if (r.data && r.data.length > 0) setEstudiantesLista(r.data);
-      } catch (e) { void e; }
-      try {
-        const r = await getPagos();
-        if (r.data && r.data.length > 0) setPagos(r.data);
-      } catch (e) { void e; }
-    };
-    cargar();
-  }, []);
+  // Cuotas reales del préstamo seleccionado
+  const [cuotasBackend, setCuotasBackend] = useState([]);
+  const [cargandoCuotas, setCargandoCuotas] = useState(false);
+  const [errorCuotas, setErrorCuotas] = useState('');
 
   const [idSel, setIdSel] = useState('');
   const [metodo, setMetodo] = useState('YAPE');
   const [montoPago, setMontoPago] = useState('');
   const [cuotaNum, setCuotaNum] = useState('');
+  const [montoRecibidoEfectivo, setMontoRecibidoEfectivo] = useState('');
   const [busqueda, setBusqueda] = useState('');
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState(null);
 
+  const cargarDatos = async () => {
+    try {
+      const r = await getPrestamos();
+      if (r.data && r.data.length > 0) setPrestamos(r.data);
+    } catch (e) {
+      if (BACKEND_ACTIVO) setAviso({ tipo: 'err', texto: e.response?.data?.message || 'Error al cargar créditos' });
+    }
+    try {
+      const r = await getEstudiantes();
+      if (r.data && r.data.length > 0) setEstudiantesLista(r.data);
+    } catch {
+      // Ignorar en offline
+    }
+    try {
+      const r = await getPagos();
+      if (r.data && r.data.length > 0) setPagos(r.data);
+    } catch (e) {
+      if (BACKEND_ACTIVO) setAviso({ tipo: 'err', texto: e.response?.data?.message || 'Error al cargar pagos' });
+    }
+  };
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const resPrestamos = await getPrestamos();
+        if (!cancelado && resPrestamos.data && resPrestamos.data.length > 0) {
+          setPrestamos(resPrestamos.data);
+          if (resPrestamos.data[0]) setIdSel(String(resPrestamos.data[0].id_prestamo));
+        }
+      } catch (e) {
+        if (!cancelado && BACKEND_ACTIVO) setAviso({ tipo: 'err', texto: e.response?.data?.message || 'Error al cargar préstamos' });
+      }
+
+      try {
+        const resEstudiantes = await getEstudiantes();
+        if (!cancelado && resEstudiantes.data && resEstudiantes.data.length > 0) {
+          setEstudiantesLista(resEstudiantes.data);
+        }
+      } catch (e) {
+        if (!cancelado && BACKEND_ACTIVO) setAviso({ tipo: 'err', texto: e.response?.data?.message || 'Error al cargar estudiantes' });
+      }
+
+      try {
+        const resPagos = await getPagos();
+        if (!cancelado && resPagos.data && resPagos.data.length > 0) {
+          setPagos(resPagos.data);
+        }
+      } catch (e) {
+        if (!cancelado && BACKEND_ACTIVO) setAviso({ tipo: 'err', texto: e.response?.data?.message || 'Error al cargar pagos' });
+      }
+    })();
+    return () => { cancelado = true; };
+  }, []);
+
   useEffect(() => {
     if (!aviso) return undefined;
-    const t = setTimeout(() => setAviso(null), 4500);
+    const t = setTimeout(() => setAviso(null), 5000);
     return () => clearTimeout(t);
   }, [aviso]);
 
-  // Créditos con saldo pendiente (igual que el combo de RegistroPagos)
-  const activos = prestamos.filter((p) => Number(p.saldo) > 0);
+  // Créditos cobrables: incluye "Activo" y "Riesgo Temprano" con saldo mayor a 0
+  const activos = prestamos.filter((p) => 
+    (p.estado === 'Activo' || p.estado === 'Riesgo Temprano') && Number(p.saldo) > 0
+  );
   const sel = activos.find((p) => String(p.id_prestamo) === String(idSel)) || activos[0];
+
+  // Cargar cronograma real del préstamo seleccionado
+  useEffect(() => {
+    let cancelado = false;
+    if (!sel?.id_prestamo) return;
+
+    (async () => {
+      setCargandoCuotas(true);
+      setErrorCuotas('');
+      if (BACKEND_ACTIVO) {
+        try {
+          const resp = await getCuotasPrestamo(sel.id_prestamo);
+          if (cancelado) return;
+          const cuotasData = resp.data || [];
+          setCuotasBackend(cuotasData);
+
+          // Preseleccionar la primera cuota pendiente o vencida
+          const primeraPendiente = cuotasData.find(c => c.estado === 'Pendiente' || c.estado === 'Vencida');
+          if (primeraPendiente) {
+            setCuotaNum(String(primeraPendiente.numero_cuota));
+            setMontoPago(Number(primeraPendiente.pendiente || primeraPendiente.monto).toFixed(2));
+          }
+        } catch (err) {
+          if (!cancelado) {
+            setErrorCuotas(err.response?.data?.message || 'No se pudo cargar el cronograma desde el servidor');
+            setCuotasBackend([]);
+          }
+        } finally {
+          if (!cancelado) setCargandoCuotas(false);
+        }
+      } else {
+        // Cronograma simulado offline
+        const total = Number(sel.monto) * (1 + Number(sel.tasa_interes) / 100);
+        const cBase = total / Number(sel.cuotas);
+        const sim = [];
+        for (let i = 1; i <= Number(sel.cuotas); i++) {
+          sim.push({
+            id_cuota: i,
+            numero_cuota: i,
+            fecha_vencimiento: `2026-11-${String(i * 5).padStart(2, '0')}`,
+            monto: cBase,
+            pendiente: cBase,
+            pagado: 0,
+            estado: 'Pendiente',
+            dias_mora: 0,
+            monto_mora: 0
+          });
+        }
+        if (!cancelado) {
+          setCuotasBackend(sim);
+          if (sim[0]) {
+            setCuotaNum(String(sim[0].numero_cuota));
+            setMontoPago(sim[0].monto.toFixed(2));
+          }
+          setCargandoCuotas(false);
+        }
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [sel?.id_prestamo, sel?.monto, sel?.tasa_interes, sel?.cuotas]);
 
   const dniDe = (pg) => {
     if (pg.dni) return pg.dni;
@@ -84,15 +192,10 @@ const Amortizaciones = () => {
     return es ? es.dni : '—';
   };
 
-  const recargarDatos = async () => {
-    try {
-      const r = await getPrestamos();
-      if (r.data) setPrestamos(r.data);
-    } catch (e) { void e; }
-    try {
-      const r = await getPagos();
-      if (r.data) setPagos(r.data);
-    } catch (e) { void e; }
+  const handleSeleccionarCuota = (c) => {
+    setCuotaNum(String(c.numero_cuota));
+    const pendiente = Number(c.pendiente !== undefined ? c.pendiente : c.monto);
+    setMontoPago(pendiente.toFixed(2));
   };
 
   const handleGuardar = async (e) => {
@@ -120,11 +223,23 @@ const Amortizaciones = () => {
       metodo_pago: metodo
     };
 
-    try {
-      await postPago(payload);
-      await recargarDatos();
-    } catch {
-      // Modo desconectado: misma regla SQL (saldo = max(saldo - monto, 0), estado Pagado si llega a 0)
+    if (BACKEND_ACTIVO) {
+      try {
+        await postPago(payload);
+        await cargarDatos();
+        // Recargar cronograma del crédito
+        const respCuotas = await getCuotasPrestamo(sel.id_prestamo);
+        setCuotasBackend(respCuotas.data || []);
+
+        setAviso({ tipo: 'ok', texto: `Pago de S/. ${montoAbono.toFixed(2)} registrado exitosamente para la cuota ${cuota}.` });
+        setMontoPago('');
+        setMontoRecibidoEfectivo('');
+      } catch (err) {
+        setAviso({ tipo: 'err', texto: err.response?.data?.message || 'No se pudo registrar el pago en el servidor.' });
+      } finally {
+        setCargando(false);
+      }
+    } else {
       const saldoActual = Number(sel.saldo);
       setPrestamos((prev) =>
         prev.map((p) =>
@@ -146,13 +261,47 @@ const Amortizaciones = () => {
         },
         ...prev
       ]);
+      setAviso({ tipo: 'ok', texto: 'Amortización procesada en modo local.' });
+      setMontoPago('');
+      setMontoRecibidoEfectivo('');
+      setCargando(false);
+    }
+  };
+
+  const handleAnularPago = async (idPago) => {
+    if (!window.confirm(`¿Está seguro de que desea anular el pago #${idPago}? Se devolverá el saldo al préstamo y se reabrirá la cuota.`)) {
+      return;
     }
 
-    setAviso({ tipo: 'ok', texto: 'Amortización procesada y saldo actualizado.' });
-    setMontoPago('');
-    setCuotaNum('');
-    setCargando(false);
+    setCargando(true);
+    if (BACKEND_ACTIVO) {
+      try {
+        await anularPago(idPago);
+        await cargarDatos();
+        if (sel?.id_prestamo) {
+          const respCuotas = await getCuotasPrestamo(sel.id_prestamo);
+          setCuotasBackend(respCuotas.data || []);
+        }
+        setAviso({ tipo: 'ok', texto: `Pago #${idPago} anulado exitosamente.` });
+      } catch (err) {
+        setAviso({ tipo: 'err', texto: err.response?.data?.message || 'No se pudo anular el pago' });
+      } finally {
+        setCargando(false);
+      }
+    } else {
+      setPagos(prev => prev.filter(p => p.id_pago !== idPago));
+      setAviso({ tipo: 'ok', texto: `[Modo local] Pago #${idPago} anulado` });
+      setCargando(false);
+    }
   };
+
+  // Cálculo de vuelto para PAGOEFECTIVO
+  const vueltoCalculado = useMemo(() => {
+    if (metodo !== 'PAGOEFECTIVO') return 0;
+    const recibido = parseFloat(montoRecibidoEfectivo) || 0;
+    const aPagar = parseFloat(montoPago) || 0;
+    return Math.max(0, recibido - aPagar);
+  }, [metodo, montoRecibidoEfectivo, montoPago]);
 
   const pagosFiltrados = pagos
     .filter((pg) => {
@@ -166,50 +315,12 @@ const Amortizaciones = () => {
     })
     .sort((a, b) => Number(b.id_pago) - Number(a.id_pago));
 
-  // ---- Indicadores derivados (solo lectura) ----
   const saldoPorCobrar = activos.reduce((s, p) => s + Number(p.saldo), 0);
   const totalAmortizado = pagos.reduce((s, pg) => s + Number(pg.monto || 0), 0);
   const enMora = prestamos.filter((p) => Number(p.dias_mora) > 0 && Number(p.saldo) > 0).length;
 
-  // Serie mensual de los últimos 6 meses
-  const serie = (() => {
-    const hoy = new Date();
-    const arr = [];
-    for (let i = 5; i >= 0; i -= 1) {
-      const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
-      arr.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: MESES[d.getMonth()], total: 0 });
-    }
-    pagos.forEach((pg) => {
-      const m = arr.find((x) => x.key === String(pg.fecha_pago).slice(0, 7));
-      if (m) m.total += Number(pg.monto) || 0;
-    });
-    return arr;
-  })();
-  const maxSerie = Math.max(...serie.map((s) => s.total), 0);
-  const escala = maxSerie || 1;
-  const pts = serie.map((s, i) => [40 + i * 96, 180 - (s.total / escala) * 130]);
-  const trazo = pts
-    .map((p, i) => {
-      if (i === 0) return `M${p[0]} ${p[1]}`;
-      const mx = (pts[i - 1][0] + p[0]) / 2;
-      return `C${mx} ${pts[i - 1][1]} ${mx} ${p[1]} ${p[0]} ${p[1]}`;
-    })
-    .join(' ');
-  const iMax = maxSerie > 0 ? serie.findIndex((s) => s.total === maxSerie) : -1;
-
-  // ---- Crédito seleccionado ----
-  const totalDeuda = sel ? Number(sel.monto) * (1 + Number(sel.tasa_interes) / 100) : 0;
-  const pctPagado = sel && totalDeuda ? Math.max(0, Math.min(100, (1 - Number(sel.saldo) / totalDeuda) * 100)) : 0;
-  const cuotaSugerida = sel && Number(sel.cuotas) > 0 ? totalDeuda / Number(sel.cuotas) : 0;
-  const pagosSel = sel ? pagos.filter((pg) => String(pg.id_prestamo) === String(sel.id_prestamo)) : [];
-  const cuotasPagadas = new Set(pagosSel.map((pg) => Number(pg.cuota_numero))).size;
-  const proxima = sel ? Math.min(cuotasPagadas + 1, Number(sel.cuotas)) : 0;
-
-  const usarCuotaSugerida = () => {
-    if (!sel) return;
-    setMontoPago(Math.min(cuotaSugerida, Number(sel.saldo)).toFixed(2));
-    setCuotaNum(String(proxima));
-  };
+  // Cuotas pendientes o vencidas del crédito seleccionado
+  const cuotasCobrables = cuotasBackend.filter(c => c.estado === 'Pendiente' || c.estado === 'Vencida');
 
   return (
     <div className="bx-app" translate="no">
@@ -219,7 +330,7 @@ const Amortizaciones = () => {
         <div className="bx-hd">
           <div>
             <h1>Procesar amortizaciones</h1>
-            <span>Cobros y cronograma de cuotas</span>
+            <span>Cobros en ventanilla y cronograma oficial de cuotas</span>
           </div>
           <button className="bx-btn" onClick={() => montoRef.current && montoRef.current.focus()}>
             <Wallet size={16} />
@@ -231,7 +342,7 @@ const Amortizaciones = () => {
           <div className="bx-c">
             <div className="bx-k">Saldo por cobrar</div>
             <div className="bx-v" style={{ color: 'var(--bx-or)' }}>{soles(saldoPorCobrar)}</div>
-            <div className="bx-k">{activos.length} créditos con saldo</div>
+            <div className="bx-k">{activos.length} créditos vigentes</div>
           </div>
           <div className="bx-c">
             <div className="bx-k">Total amortizado</div>
@@ -251,54 +362,107 @@ const Amortizaciones = () => {
         </div>
 
         <div className="bx-g bx-g2">
+          {/* Panel de Cronograma Oficial del Préstamo */}
           <div className="bx-c">
-            <h3>Recaudación mensual</h3>
-            <svg className="bx-svg" viewBox="0 0 560 220" role="img" aria-label="Recaudación de los últimos seis meses">
-              <defs>
-                <linearGradient id="bxam" x1="0" x2="1">
-                  <stop offset="0" stopColor="#ff5a36" />
-                  <stop offset="1" stopColor="#c026a8" />
-                </linearGradient>
-              </defs>
-              <g stroke="#1d1d22" strokeDasharray="4 5">
-                <path d="M0 50H560M0 100H560M0 150H560M0 180H560" />
-              </g>
-              <path d={trazo} fill="none" stroke="url(#bxam)" strokeWidth="3.5" strokeLinecap="round" />
-              {iMax >= 0 && (
-                <g>
-                  <circle cx={pts[iMax][0]} cy={pts[iMax][1]} r="7" fill="#ff5a36" stroke="#fff" strokeWidth="2" />
-                  <rect x={Math.min(Math.max(pts[iMax][0] - 52, 4), 452)} y={Math.max(pts[iMax][1] - 42, 4)} width="104" height="26" rx="13" fill="#ff5a36" />
-                  <text x={Math.min(Math.max(pts[iMax][0], 56), 504)} y={Math.max(pts[iMax][1] - 25, 21)} textAnchor="middle" fill="#fff" fontSize="12" fontWeight="700">
-                    + {soles(maxSerie).replace('.00', '')}
-                  </text>
-                </g>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0 }}>
+                {sel ? `Cronograma · ${codCredito(sel.id_prestamo)} (${sel.estudiante_nombre || 'Estudiante'})` : 'Cronograma'}
+              </h3>
+              {sel?.estado === 'Riesgo Temprano' && (
+                <span className="bx-b bx-b-am">Riesgo Temprano</span>
               )}
-              <g fill="#8b8b93" fontSize="11" textAnchor="middle">
-                {serie.map((s, i) => (
-                  <text key={s.key} x={pts[i][0]} y="208" fill={i === iMax ? '#fff' : '#8b8b93'} fontWeight={i === iMax ? 700 : 400}>{s.label}</text>
-                ))}
-              </g>
-            </svg>
+            </div>
+
+            {errorCuotas && (
+              <div className="bx-k" style={{ color: 'var(--bx-rd)', padding: '10px 0' }}>
+                {errorCuotas}
+              </div>
+            )}
+
+            {cargandoCuotas ? (
+              <div style={{ textAlign: 'center', padding: '30px' }}>
+                <Loader2 size={24} className="animate-spin" style={{ margin: '0 auto' }} />
+              </div>
+            ) : cuotasBackend.length > 0 ? (
+              <div style={{ overflowX: 'auto', maxHeight: '320px' }}>
+                <table className="bx-table" style={{ fontSize: '12px' }}>
+                  <thead>
+                    <tr>
+                      <th>Cuota</th>
+                      <th>Vencimiento</th>
+                      <th>Monto</th>
+                      <th>Estado</th>
+                      <th>Mora</th>
+                      <th style={{ textAlign: 'right' }}>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cuotasBackend.map((c) => {
+                      const esPendienteOVencida = c.estado === 'Pendiente' || c.estado === 'Vencida';
+                      const seleccionada = String(cuotaNum) === String(c.numero_cuota);
+
+                      return (
+                        <tr key={c.id_cuota || c.numero_cuota} style={{ background: seleccionada ? 'rgba(255,90,54,0.12)' : undefined }}>
+                          <td style={{ fontWeight: 700 }}>Cuota {c.numero_cuota}</td>
+                          <td>{c.fecha_vencimiento}</td>
+                          <td style={{ fontWeight: 600 }}>S/ {Number(c.monto).toFixed(2)}</td>
+                          <td>
+                            <span className={`bx-b ${c.estado === 'Pagada' ? 'bx-b-gr' : c.estado === 'Vencida' ? 'bx-b-rd' : 'bx-b-am'}`}>
+                              {c.estado}
+                            </span>
+                          </td>
+                          <td>
+                            {Number(c.monto_mora) > 0 ? (
+                              <span style={{ color: 'var(--bx-rd)', fontWeight: 700 }}>S/ {Number(c.monto_mora).toFixed(2)}</span>
+                            ) : (
+                              <span style={{ color: 'var(--bx-mu)' }}>-</span>
+                            )}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            {esPendienteOVencida ? (
+                              <button
+                                type="button"
+                                className={`bx-chip ${seleccionada ? 'on' : ''}`}
+                                onClick={() => handleSeleccionarCuota(c)}
+                              >
+                                {seleccionada ? 'Seleccionada' : 'Cobrar'}
+                              </button>
+                            ) : (
+                              <span style={{ color: 'var(--bx-gr)', fontSize: '11px' }}>✓ Cancelada</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="bx-k" style={{ padding: '20px 0', textAlign: 'center' }}>
+                {sel ? 'No hay cuotas registradas para este crédito.' : 'Sin créditos seleccionados.'}
+              </div>
+            )}
           </div>
 
+          {/* Formulario de Amortización */}
           <div className="bx-c">
             <h3>Registrar amortización</h3>
             <form onSubmit={handleGuardar} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
-                <label className="bx-lbl">Seleccione crédito</label>
+                <label className="bx-lbl">Seleccione crédito a amortizar</label>
                 <select
                   className="bx-in"
                   style={{ cursor: 'pointer' }}
                   value={sel ? sel.id_prestamo : ''}
                   onChange={(e) => setIdSel(e.target.value)}
                 >
-                  {activos.length === 0 && <option value="">Sin créditos activos</option>}
+                  {activos.length === 0 && <option value="">Sin créditos activos con saldo</option>}
                   {activos.map((p) => {
                     const est = estudiantesLista.find((x) => String(x.id_estudiante) === String(p.id_estudiante));
                     const ape = est ? est.apellido : (p.estudiante_nombre || '').split(' ').slice(-1)[0];
                     return (
                       <option key={p.id_prestamo} value={p.id_prestamo}>
-                        {codCredito(p.id_prestamo)} ({ape}) - Saldo: S/.{Number(p.saldo).toFixed(2)}
+                        {codCredito(p.id_prestamo)} ({ape}) - Saldo: S/.{Number(p.saldo).toFixed(2)} [{p.estado}]
                       </option>
                     );
                   })}
@@ -306,8 +470,32 @@ const Amortizaciones = () => {
               </div>
 
               <div>
+                <label className="bx-lbl">Seleccione cuota a cancelar</label>
+                <select
+                  className="bx-in"
+                  value={cuotaNum}
+                  onChange={(e) => {
+                    const cNum = e.target.value;
+                    setCuotaNum(cNum);
+                    const cObj = cuotasBackend.find(c => String(c.numero_cuota) === String(cNum));
+                    if (cObj) {
+                      setMontoPago(Number(cObj.pendiente !== undefined ? cObj.pendiente : cObj.monto).toFixed(2));
+                    }
+                  }}
+                  required
+                >
+                  {cuotasCobrables.length === 0 && <option value="">No hay cuotas pendientes</option>}
+                  {cuotasCobrables.map((c) => (
+                    <option key={c.numero_cuota} value={c.numero_cuota}>
+                      Cuota {c.numero_cuota} · Vence: {c.fecha_vencimiento} · Pendiente: S/ {Number(c.pendiente || c.monto).toFixed(2)} {Number(c.monto_mora) > 0 ? `(+ S/ ${c.monto_mora} mora)` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
                 <label className="bx-lbl">Método de pago</label>
-                <div className="bx-methods">
+                <div className="bx-methods" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                   {METODOS.map((m) => (
                     <button type="button" key={m} className={`bx-chip ${metodo === m ? 'on' : ''}`} onClick={() => setMetodo(m)}>
                       {m}
@@ -332,21 +520,44 @@ const Amortizaciones = () => {
                   />
                 </div>
                 <div>
-                  <label className="bx-lbl">Número de cuota</label>
+                  <label className="bx-lbl">N° Cuota Enviado</label>
                   <input
                     type="number"
-                    required
+                    readOnly
                     value={cuotaNum}
-                    onChange={(e) => setCuotaNum(e.target.value)}
                     className="bx-in"
-                    placeholder="1"
+                    style={{ background: '#121217', color: 'var(--bx-or)', fontWeight: 700 }}
                   />
                 </div>
               </div>
 
-              <button type="button" className="bx-link-btn" style={{ textAlign: 'left' }} onClick={usarCuotaSugerida}>
-                Usar cuota sugerida ({soles(cuotaSugerida)} · cuota {proxima || '—'})
-              </button>
+              {/* Si es PAGOEFECTIVO, mostrar Monto recibido y calcular vuelto en vivo */}
+              {metodo === 'PAGOEFECTIVO' && (
+                <div style={{ background: '#0e0e12', border: '1px solid var(--bx-line)', borderRadius: '12px', padding: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--bx-gr)', fontWeight: 600, fontSize: '13px', marginBottom: '8px' }}>
+                    <Coins size={15} /> Pago en Efectivo y Vuelto
+                  </div>
+                  <div className="bx-r2">
+                    <div>
+                      <label className="bx-lbl">Monto recibido (S/.)</label>
+                      <input
+                        type="number"
+                        step="0.10"
+                        className="bx-in"
+                        placeholder="Ej. 500.00"
+                        value={montoRecibidoEfectivo}
+                        onChange={(e) => setMontoRecibidoEfectivo(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="bx-lbl">Vuelto a entregar</label>
+                      <div className="bx-in" style={{ fontWeight: 800, color: 'var(--bx-gr)', fontSize: '15px' }}>
+                        S/ {vueltoCalculado.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {aviso && (
                 <div className={`bx-aviso ${aviso.tipo}`} role="status">
@@ -363,87 +574,67 @@ const Amortizaciones = () => {
           </div>
         </div>
 
-        <div className="bx-g bx-g2">
-          <div className="bx-c">
-            <div className="bx-toolbar">
-              <h3 style={{ margin: 0 }}>Historial de pagos</h3>
-              <div className="bx-search">
-                <Search size={17} />
-                <input
-                  type="text"
-                  value={busqueda}
-                  onChange={(e) => setBusqueda(e.target.value)}
-                  placeholder="Buscar por código de pago, crédito o DNI..."
-                  className="bx-in"
-                />
-              </div>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="bx-table">
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left' }}>ID pago</th>
-                    <th style={{ textAlign: 'left' }}>Ref. crédito</th>
-                    <th style={{ textAlign: 'left' }}>DNI alumno</th>
-                    <th style={{ textAlign: 'left' }}>Monto abonado</th>
-                    <th style={{ textAlign: 'left' }}>Cuota N°</th>
-                    <th style={{ textAlign: 'left' }}>Método</th>
-                    <th>Fecha</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagosFiltrados.map((pg) => (
-                    <tr key={pg.id_pago}>
-                      <td style={{ textAlign: 'left', color: 'var(--bx-or)', fontWeight: 700 }}>{codPago(pg.id_pago)}</td>
-                      <td style={{ textAlign: 'left' }}>{codCredito(pg.id_prestamo)}</td>
-                      <td style={{ textAlign: 'left' }}>{dniDe(pg)}</td>
-                      <td style={{ textAlign: 'left', fontWeight: 700 }}>{soles(pg.monto)}</td>
-                      <td style={{ textAlign: 'left' }}>{pg.cuota_numero}</td>
-                      <td style={{ textAlign: 'left' }}>
-                        <span className={`bx-b ${pg.metodo_pago === 'YAPE' || pg.metodo_pago === 'PLIN' ? 'bx-b-mg' : 'bx-b-bl'}`}>{pg.metodo_pago}</span>
-                      </td>
-                      <td>{String(pg.fecha_pago).slice(0, 10)}</td>
-                    </tr>
-                  ))}
-                  {pagosFiltrados.length === 0 && (
-                    <tr><td colSpan={7} style={{ textAlign: 'center' }} className="bx-k">Sin pagos que coincidan con la búsqueda.</td></tr>
-                  )}
-                </tbody>
-              </table>
+        {/* Historial de Pagos con Opción de Anular para ADMIN */}
+        <div className="bx-c">
+          <div className="bx-toolbar">
+            <h3 style={{ margin: 0 }}>Historial de pagos registrados</h3>
+            <div className="bx-search">
+              <Search size={17} />
+              <input
+                type="text"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar por código de pago, crédito o DNI..."
+                className="bx-in"
+              />
             </div>
           </div>
-
-          <div className="bx-c">
-            <h3>{sel ? `Cronograma · ${codCredito(sel.id_prestamo)}` : 'Cronograma'}</h3>
-            {sel ? (
-              <>
-                <svg className="bx-svg" viewBox="0 0 200 200" style={{ maxWidth: 160, margin: '0 auto' }} role="img" aria-label="Porcentaje pagado del crédito">
-                  <circle cx="100" cy="100" r="74" fill="none" stroke="#1d1d22" strokeWidth="16" />
-                  <circle cx="100" cy="100" r="74" fill="none" stroke="url(#bxam)" strokeWidth="16" strokeLinecap="round" strokeDasharray={`${(pctPagado / 100) * CIRC} ${CIRC}`} transform="rotate(-90 100 100)" />
-                  <text x="100" y="98" textAnchor="middle" fill="#fff" fontSize="28" fontWeight="700">{Math.round(pctPagado)}%</text>
-                  <text x="100" y="118" textAnchor="middle" fill="#8b8b93" fontSize="11">pagado</text>
-                </svg>
-                <div className="bx-tl" aria-label="Cuotas del crédito">
-                  {Array.from({ length: Number(sel.cuotas) || 0 }, (_, i) => (
-                    <i key={i} className={i + 1 <= cuotasPagadas ? 'ok' : i + 1 === proxima ? 'now' : ''} />
-                  ))}
-                </div>
-                <div className="bx-k" style={{ marginBottom: 8 }}>
-                  {cuotasPagadas} de {sel.cuotas} cuotas pagadas · próxima: cuota {proxima}
-                </div>
-                <div className="bx-li"><span>Estudiante</span><b>{sel.estudiante_nombre}</b></div>
-                <div className="bx-li"><span>Cuota sugerida</span><b>{soles(cuotaSugerida)}</b></div>
-                <div className="bx-li"><span>Saldo actual</span><b>{soles(sel.saldo)}</b></div>
-                <div className="bx-li">
-                  <span>Estado de mora</span>
-                  {Number(sel.dias_mora) > 0
-                    ? <b style={{ color: 'var(--bx-rd)' }}>{sel.dias_mora} días</b>
-                    : <b style={{ color: 'var(--bx-gr)' }}>Al día</b>}
-                </div>
-              </>
-            ) : (
-              <div className="bx-k">No hay créditos activos para cobrar.</div>
-            )}
+          <div style={{ overflowX: 'auto' }}>
+            <table className="bx-table">
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left' }}>ID pago</th>
+                  <th style={{ textAlign: 'left' }}>Ref. crédito</th>
+                  <th style={{ textAlign: 'left' }}>DNI alumno</th>
+                  <th style={{ textAlign: 'left' }}>Monto abonado</th>
+                  <th style={{ textAlign: 'left' }}>Cuota N°</th>
+                  <th style={{ textAlign: 'left' }}>Método</th>
+                  <th>Fecha</th>
+                  {esAdmin && <th style={{ textAlign: 'center' }}>Acciones</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {pagosFiltrados.map((pg) => (
+                  <tr key={pg.id_pago}>
+                    <td style={{ textAlign: 'left', color: 'var(--bx-or)', fontWeight: 700 }}>{codPago(pg.id_pago)}</td>
+                    <td style={{ textAlign: 'left' }}>{codCredito(pg.id_prestamo)}</td>
+                    <td style={{ textAlign: 'left' }}>{dniDe(pg)}</td>
+                    <td style={{ textAlign: 'left', fontWeight: 700 }}>{soles(pg.monto)}</td>
+                    <td style={{ textAlign: 'left' }}>{pg.cuota_numero}</td>
+                    <td style={{ textAlign: 'left' }}>
+                      <span className={`bx-b ${pg.metodo_pago === 'YAPE' || pg.metodo_pago === 'PLIN' ? 'bx-b-mg' : 'bx-b-bl'}`}>{pg.metodo_pago}</span>
+                    </td>
+                    <td>{String(pg.fecha_pago).slice(0, 10)}</td>
+                    {esAdmin && (
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          className="bx-chip"
+                          onClick={() => handleAnularPago(pg.id_pago)}
+                          title="Anular pago y restituir saldo a la cuota"
+                          style={{ color: 'var(--bx-rd)' }}
+                        >
+                          <Ban size={12} style={{ display: 'inline', marginRight: '4px' }} />
+                          Anular
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                {pagosFiltrados.length === 0 && (
+                  <tr><td colSpan={esAdmin ? 8 : 7} style={{ textAlign: 'center' }} className="bx-k">Sin pagos que coincidan con la búsqueda.</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </main>

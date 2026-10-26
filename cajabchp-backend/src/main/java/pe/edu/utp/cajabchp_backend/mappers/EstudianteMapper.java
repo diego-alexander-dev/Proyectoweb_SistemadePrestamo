@@ -11,6 +11,10 @@ import java.util.Objects;
 public class EstudianteMapper {
 
     public EstudianteDTO toDTO(Estudiante entity) {
+        return toDTO(entity, false);
+    }
+
+    public EstudianteDTO toDTO(Estudiante entity, Boolean riesgoTemprano) {
         if (entity == null) return null;
         return EstudianteDTO.builder()
             .idEstudiante(entity.getIdEstudiante())
@@ -25,6 +29,7 @@ public class EstudianteMapper {
             .estadoUniversidad(entity.getEstadoUniversidad())
             .cicloActual(entity.getCicloActual())
             .fechaRegistro(entity.getFechaRegistro())
+            .riesgoTemprano(riesgoTemprano != null ? riesgoTemprano : false)
             .build();
     }
 

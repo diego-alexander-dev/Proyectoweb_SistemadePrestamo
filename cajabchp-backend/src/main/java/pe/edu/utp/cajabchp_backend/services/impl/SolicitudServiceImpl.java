@@ -10,11 +10,17 @@ import pe.edu.utp.cajabchp_backend.exception.BusinessRuleException;
 import pe.edu.utp.cajabchp_backend.exception.ResourceNotFoundException;
 import pe.edu.utp.cajabchp_backend.mappers.SolicitudMapper;
 import pe.edu.utp.cajabchp_backend.models.Estudiante;
+import pe.edu.utp.cajabchp_backend.models.HistorialCredito;
 import pe.edu.utp.cajabchp_backend.models.Prestamo;
 import pe.edu.utp.cajabchp_backend.models.Solicitud;
 import pe.edu.utp.cajabchp_backend.repositories.EstudianteRepository;
+import pe.edu.utp.cajabchp_backend.repositories.HistorialCreditoRepository;
 import pe.edu.utp.cajabchp_backend.repositories.PrestamoRepository;
 import pe.edu.utp.cajabchp_backend.repositories.SolicitudRepository;
+import pe.edu.utp.cajabchp_backend.security.UserContext;
+import pe.edu.utp.cajabchp_backend.services.CronogramaService;
+import pe.edu.utp.cajabchp_backend.services.MoraService;
+import pe.edu.utp.cajabchp_backend.services.ScoringService;
 import pe.edu.utp.cajabchp_backend.services.SolicitudService;
 
 import java.math.BigDecimal;
@@ -30,7 +36,13 @@ public class SolicitudServiceImpl implements SolicitudService {
     private final SolicitudRepository solicitudRepository;
     private final EstudianteRepository estudianteRepository;
     private final PrestamoRepository prestamoRepository;
+    private final HistorialCreditoRepository historialCreditoRepository;
+    private final CronogramaService cronogramaService;
+    private final ScoringService scoringService;
+    private final MoraService moraService;
     private final SolicitudMapper solicitudMapper;
+
+    private static final List<String> ESTADOS_VALIDOS = List.of("PENDIENTE", "APROBADO", "RECHAZADO", "ESCALADO");
 
     @Override
     @Transactional(readOnly = true)
@@ -45,7 +57,8 @@ public class SolicitudServiceImpl implements SolicitudService {
     @Transactional(readOnly = true)
     public List<SolicitudDTO> listarPorEstado(String estado) {
         Objects.requireNonNull(estado, "El estado no puede ser nulo");
-        return solicitudRepository.findByEstadoSolicitudWithEstudiante(estado.trim().toUpperCase())
+        String estadoNormalizado = estado.trim().toUpperCase();
+        return solicitudRepository.findByEstadoSolicitudWithEstudiante(estadoNormalizado)
             .stream()
             .map(solicitudMapper::toDTO)
             .toList();
@@ -74,6 +87,7 @@ public class SolicitudServiceImpl implements SolicitudService {
 
         String recomendacion = calcularRecomendacionCrediticia(estudiante);
         Solicitud nueva = solicitudMapper.toEntity(dto, estudiante, recomendacion);
+        nueva.setAtendidoPor(UserContext.getUsuario());
         Solicitud guardada = solicitudRepository.save(nueva);
         return solicitudMapper.toDTO(guardada);
     }
@@ -88,21 +102,36 @@ public class SolicitudServiceImpl implements SolicitudService {
             .orElseThrow(() -> new ResourceNotFoundException("Solicitud con ID " + id + " no encontrada"));
 
         String nuevoEstado = dto.getEstadoSolicitud().trim().toUpperCase();
+        if (!ESTADOS_VALIDOS.contains(nuevoEstado)) {
+            throw new BusinessRuleException("Estado de solicitud inválido: '" + nuevoEstado + "'. Los estados válidos son: PENDIENTE, APROBADO, RECHAZADO o ESCALADO");
+        }
+
+        // Una solicitud ya APROBADA no puede generar otro préstamo ni cambiar de estado
+        if ("APROBADO".equalsIgnoreCase(solicitud.getEstadoSolicitud())) {
+            throw new BusinessRuleException("La solicitud ya se encuentra APROBADA y no puede cambiar de estado ni generar otro préstamo");
+        }
+
         String estadoAnterior = solicitud.getEstadoSolicitud();
         solicitud.setEstadoSolicitud(nuevoEstado);
-        Solicitud actualizada = solicitudRepository.save(solicitud);
+        solicitud.setAtendidoPor(UserContext.getUsuario());
 
-        // Si la solicitud pasa a estado APROBADO y antes no lo estaba, generar el préstamo activo automáticamente
+        // Si la solicitud pasa a estado APROBADO, validar que el estudiante no esté RETIRADO y generar el préstamo
         if ("APROBADO".equals(nuevoEstado) && !"APROBADO".equals(estadoAnterior)) {
-            BigDecimal tasaInteres = new BigDecimal("10.00");
-            BigDecimal factorInteres = BigDecimal.ONE.add(tasaInteres.divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
+            Estudiante estudiante = solicitud.getEstudiante();
+            if ("RETIRADO".equalsIgnoreCase(estudiante.getEstadoUniversidad())) {
+                throw new BusinessRuleException("No se puede aprobar la solicitud porque el estudiante está en estado RETIRADO");
+            }
+
+            // Tasa dinámica calculada por el servidor
+            BigDecimal tasaDinamica = scoringService.calcularTasaDinamica(estudiante.getPromedioNotas());
+            BigDecimal factorInteres = BigDecimal.ONE.add(tasaDinamica.divide(new BigDecimal("100"), 6, RoundingMode.HALF_UP));
             BigDecimal saldoCalculado = solicitud.getMontoSolicitado().multiply(factorInteres).setScale(2, RoundingMode.HALF_UP);
 
             Prestamo prestamoDesembolsado = Prestamo.builder()
-                .estudiante(solicitud.getEstudiante())
+                .estudiante(estudiante)
                 .monto(solicitud.getMontoSolicitado())
                 .cuotas(solicitud.getCuotasSolicitadas())
-                .tasaInteres(tasaInteres)
+                .tasaInteres(tasaDinamica)
                 .saldo(saldoCalculado)
                 .estado("Activo")
                 .fechaInicio(LocalDate.now())
@@ -110,9 +139,26 @@ public class SolicitudServiceImpl implements SolicitudService {
                 .interesMora(BigDecimal.ZERO)
                 .build();
 
-            prestamoRepository.save(prestamoDesembolsado);
+            Prestamo prestamoGuardado = prestamoRepository.save(prestamoDesembolsado);
+
+            // Generar cuotas exactas
+            cronogramaService.generarCuotas(prestamoGuardado);
+
+            // Evaluar riesgo temprano
+            moraService.evaluarRiesgoTemprano(prestamoGuardado);
+            prestamoGuardado = prestamoRepository.save(prestamoGuardado);
+
+            // Registrar desembolso en historial de crédito
+            historialCreditoRepository.save(HistorialCredito.builder()
+                .estudiante(estudiante)
+                .prestamo(prestamoGuardado)
+                .evento("DESEMBOLSO_SOLICITUD_" + solicitud.getIdSolicitud())
+                .fecha(LocalDate.now())
+                .saldo(prestamoGuardado.getSaldo())
+                .build());
         }
 
+        Solicitud actualizada = solicitudRepository.save(solicitud);
         return solicitudMapper.toDTO(actualizada);
     }
 

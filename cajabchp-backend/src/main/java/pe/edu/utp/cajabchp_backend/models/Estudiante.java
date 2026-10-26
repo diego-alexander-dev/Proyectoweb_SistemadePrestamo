@@ -54,6 +54,16 @@ public class Estudiante {
     @Column(name = "fecha_registro")
     private LocalDate fechaRegistro;
 
+    @PrePersist
+    public void prePersist() {
+        if (this.fechaRegistro == null) {
+            this.fechaRegistro = LocalDate.now();
+        }
+        if (this.estadoUniversidad == null) {
+            this.estadoUniversidad = "ACTIVO";
+        }
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

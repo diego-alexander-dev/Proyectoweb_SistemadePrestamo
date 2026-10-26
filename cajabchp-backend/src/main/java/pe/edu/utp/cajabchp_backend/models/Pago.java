@@ -25,13 +25,17 @@ public class Pago {
     @JoinColumn(name = "id_prestamo", nullable = false)
     private Prestamo prestamo;
 
-    @Column(name = "monto", nullable = false, precision = 10, scale = 2)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_cuota")
+    private Cuota cuota;
+
+    @Column(name = "monto", nullable = false, precision = 12, scale = 2)
     private BigDecimal monto;
 
     @Column(name = "cuota_numero", nullable = false)
     private Integer cuotaNumero;
 
-    @Column(name = "metodo_pago", length = 30)
+    @Column(name = "metodo_pago", length = 50)
     private String metodoPago;
 
     @Column(name = "fecha_pago")
@@ -39,6 +43,16 @@ public class Pago {
 
     @Column(name = "estado", length = 20)
     private String estado;
+
+    @PrePersist
+    public void prePersist() {
+        if (this.fechaPago == null) {
+            this.fechaPago = LocalDate.now();
+        }
+        if (this.estado == null) {
+            this.estado = "REGISTRADO";
+        }
+    }
 
     @Override
     public boolean equals(Object o) {

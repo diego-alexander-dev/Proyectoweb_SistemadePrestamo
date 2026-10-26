@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
-import { getEstudiantes, postEstudiante } from '../services/api';
+import { getEstudiantes, postEstudiante, getHistorialEstudiante, BACKEND_ACTIVO } from '../services/api';
 import { 
   UserPlus, 
   Search, 
   X, 
   GraduationCap, 
   CheckCircle2, 
-  Loader2
+  Loader2,
+  AlertTriangle,
+  History,
+  AlertCircle
 } from 'lucide-react';
 
 const Estudiantes = () => {
@@ -17,6 +20,12 @@ const Estudiantes = () => {
   const [modalAbierto, setModalAbierto] = useState(searchParams.get('nuevo') === 'true');
   const [busqueda, setBusqueda] = useState('');
   const [cargando, setCargando] = useState(false);
+  const [errorAviso, setErrorAviso] = useState('');
+
+  // Modal Historial
+  const [historialModal, setHistorialModal] = useState(null); // datos estudiante
+  const [historialDatos, setHistorialDatos] = useState(null);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
 
   const [estudiantes, setEstudiantes] = useState([
     {
@@ -29,8 +38,9 @@ const Estudiantes = () => {
       correo: 'diego.huachaca@utp.edu.pe',
       promedio_notas: 16.5,
       porcentaje_asistencia: 92.0,
-      estado_universidad: 'ACTIVO',
-      ciclo_actual: 5
+      estado_universidad: 'REGULAR',
+      ciclo_actual: 5,
+      riesgo_temprano: false
     },
     {
       id_estudiante: 2,
@@ -42,49 +52,40 @@ const Estudiantes = () => {
       correo: 'diana.apolinario@utp.edu.pe',
       promedio_notas: 14.0,
       porcentaje_asistencia: 85.0,
-      estado_universidad: 'ACTIVO',
-      ciclo_actual: 4
-    },
-    {
-      id_estudiante: 3,
-      dni: '11223344',
-      nombre: 'EDUARDO',
-      apellido: 'CAMAC',
-      edad: 22,
-      telefono: '956789012',
-      correo: 'eduardo.camac@utp.edu.pe',
-      promedio_notas: 10.0,
-      porcentaje_asistencia: 65.0,
-      estado_universidad: 'ALERTA',
-      ciclo_actual: 6
-    },
-    {
-      id_estudiante: 4,
-      dni: '99887766',
-      nombre: 'MARIA',
-      apellido: 'QUISPE',
-      edad: 19,
-      telefono: '945678901',
-      correo: 'maria.quispe@utp.edu.pe',
-      promedio_notas: 18.0,
-      porcentaje_asistencia: 98.0,
-      estado_universidad: 'ACTIVO',
-      ciclo_actual: 3
+      estado_universidad: 'REGULAR',
+      ciclo_actual: 4,
+      riesgo_temprano: true
     }
   ]);
 
+  const cargarEstudiantes = async () => {
+    try {
+      const res = await getEstudiantes();
+      if (res.data && res.data.length > 0) {
+        setEstudiantes(res.data);
+      }
+    } catch (e) {
+      if (BACKEND_ACTIVO) {
+        setErrorAviso(e.response?.data?.message || 'Error al cargar estudiantes del servidor');
+      }
+    }
+  };
+
   useEffect(() => {
-    const cargarEstudiantes = async () => {
+    let cancelado = false;
+    (async () => {
       try {
         const res = await getEstudiantes();
-        if (res.data && res.data.length > 0) {
+        if (!cancelado && res.data && res.data.length > 0) {
           setEstudiantes(res.data);
         }
-      } catch {
-        // En desarrollo desconectado no emitir advertencias de consola
+      } catch (e) {
+        if (!cancelado && BACKEND_ACTIVO) {
+          setErrorAviso(e.response?.data?.message || 'Error al cargar estudiantes del servidor');
+        }
       }
-    };
-    cargarEstudiantes();
+    })();
+    return () => { cancelado = true; };
   }, []);
 
   const [nuevo, setNuevo] = useState({
@@ -106,6 +107,7 @@ const Estudiantes = () => {
   const handleGuardar = async (e) => {
     e.preventDefault();
     setCargando(true);
+    setErrorAviso('');
 
     const payload = {
       dni: nuevo.dni.trim(),
@@ -117,54 +119,105 @@ const Estudiantes = () => {
       ciclo_actual: parseInt(nuevo.ciclo_actual, 10),
       promedio_notas: parseFloat(nuevo.promedio_notas) || 11.0,
       porcentaje_asistencia: parseFloat(nuevo.porcentaje_asistencia) || 100.0,
-      estado_universidad: 'ACTIVO'
+      estado_universidad: 'REGULAR'
     };
 
-    try {
-      await postEstudiante(payload);
-      const res = await getEstudiantes();
-      if (res.data) setEstudiantes(res.data);
-    } catch {
+    if (BACKEND_ACTIVO) {
+      try {
+        await postEstudiante(payload);
+        await cargarEstudiantes();
+        setModalAbierto(false);
+        setNuevo({
+          dni: '',
+          nombre: '',
+          apellido: '',
+          edad: 20,
+          telefono: '',
+          correo: '',
+          ciclo_actual: 1,
+          promedio_notas: 14.0,
+          porcentaje_asistencia: 100.0
+        });
+      } catch (err) {
+        // En backend activo NO modificar estado local y mostrar error
+        const msg = err.response?.data?.message || err.message || 'No se pudo guardar en el servidor';
+        setErrorAviso(msg);
+      } finally {
+        setCargando(false);
+      }
+    } else {
       setEstudiantes((prev) => [
-        { ...payload, id_estudiante: prev.length + 1 },
+        { ...payload, id_estudiante: prev.length + 1, riesgo_temprano: false },
         ...prev
       ]);
+      setModalAbierto(false);
+      setCargando(false);
+      setNuevo({
+        dni: '',
+        nombre: '',
+        apellido: '',
+        edad: 20,
+        telefono: '',
+        correo: '',
+        ciclo_actual: 1,
+        promedio_notas: 14.0,
+        porcentaje_asistencia: 100.0
+      });
     }
-
-    // Cerrar primero el modal para evitar conflicto de reconciliación en el DOM
-    setModalAbierto(false);
-    setCargando(false);
-    setNuevo({
-      dni: '',
-      nombre: '',
-      apellido: '',
-      edad: 20,
-      telefono: '',
-      correo: '',
-      ciclo_actual: 1,
-      promedio_notas: 14.0,
-      porcentaje_asistencia: 100.0
-    });
   };
-  
+
+  const abrirHistorial = async (est) => {
+    setHistorialModal(est);
+    setCargandoHistorial(true);
+    setHistorialDatos(null);
+
+    if (BACKEND_ACTIVO && est.id_estudiante) {
+      try {
+        const resp = await getHistorialEstudiante(est.id_estudiante);
+        setHistorialDatos(resp.data);
+      } catch (err) {
+        setErrorAviso(err.response?.data?.message || 'No se pudo cargar el historial crediticio');
+      } finally {
+        setCargandoHistorial(false);
+      }
+    } else {
+      setTimeout(() => {
+        setHistorialDatos({
+          id_estudiante: est.id_estudiante,
+          dni: est.dni,
+          estudiante_nombre: `${est.nombre} ${est.apellido}`,
+          promedio: est.promedio_notas,
+          saldo_total_vigente: 1200.00,
+          total_cuotas_vencidas: 1,
+          eventos: [
+            { id_historial: 1, evento: 'DESEMBOLSO - Préstamo #101', fecha: '2026-09-01', saldo: 1200.00, id_prestamo: 101 },
+            { id_historial: 2, evento: 'PAGO - Cuota 1', fecha: '2026-09-20', saldo: 800.00, id_prestamo: 101 },
+          ],
+          cuotas_vencidas_detalle: [
+            { id_cuota: 5, id_prestamo: 101, numero_cuota: 2, fecha_vencimiento: '2026-10-15', monto: 400.00, estado: 'Vencida', dias_mora: 10, monto_mora: 8.00 }
+          ]
+        });
+        setCargandoHistorial(false);
+      }, 300);
+    }
+  };
 
   const filtrados = estudiantes.filter((est) => 
     (est.nombre + ' ' + est.apellido).toLowerCase().includes(busqueda.toLowerCase()) ||
     est.dni.includes(busqueda)
   );
 
-  // Indicadores derivados (solo lectura, no alteran la lógica)
   const total = estudiantes.length;
   const promedioGeneral = total
     ? estudiantes.reduce((acc, e) => acc + (Number(e.promedio_notas) || 0), 0) / total
     : 0;
-  const enRiesgo = estudiantes.filter((e) => e.estado_universidad !== 'ACTIVO').length;
+  const enRiesgo = estudiantes.filter((e) => e.estado_universidad !== 'REGULAR' && e.estado_universidad !== 'ACTIVO').length;
   const ciclosBajos = estudiantes.filter((e) => Number(e.ciclo_actual) <= 5).length;
   const pctBajos = total ? ciclosBajos / total : 0;
   const CIRC = 464.9;
 
   const badgeEstado = (estado) =>
-    estado === 'ACTIVO' ? 'bx-b-gr' : estado === 'ALERTA' ? 'bx-b-am' : 'bx-b-rd';
+    (estado === 'ACTIVO' || estado === 'REGULAR') ? 'bx-b-gr' : estado === 'ALERTA' ? 'bx-b-am' : 'bx-b-rd';
 
   return (
     <div className="bx-app" translate="no">
@@ -174,13 +227,20 @@ const Estudiantes = () => {
         <div className="bx-hd">
           <div>
             <h1>Registro de estudiantes</h1>
-            <span>Cartera activa del semestre</span>
+            <span>Cartera activa del semestre y seguimiento crediticio</span>
           </div>
           <button onClick={() => setModalAbierto(true)} className="bx-btn">
             <UserPlus size={16} />
             Nuevo Estudiante
           </button>
         </div>
+
+        {errorAviso && (
+          <div className="bx-c" style={{ borderLeft: '4px solid var(--bx-rd)', padding: '12px 18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertCircle size={16} color="var(--bx-rd)" />
+            <span style={{ color: 'var(--bx-rd)', fontWeight: 600 }}>{errorAviso}</span>
+          </div>
+        )}
 
         <div className="bx-g" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
           <div className="bx-c">
@@ -225,9 +285,9 @@ const Estudiantes = () => {
                     <th style={{ textAlign: 'left' }}>DNI</th>
                     <th style={{ textAlign: 'left' }}>Estudiante</th>
                     <th style={{ textAlign: 'left' }}>Ciclo / Edad</th>
-                    <th style={{ textAlign: 'left' }}>Contacto</th>
                     <th style={{ textAlign: 'left' }}>Promedio / Asistencia</th>
                     <th>Estado</th>
+                    <th style={{ textAlign: 'center' }}>Historial</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -237,15 +297,16 @@ const Estudiantes = () => {
                       <td style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>
                         <span className="bx-av">{(est.nombre || ' ')[0]}{(est.apellido || ' ')[0]}</span>
                         {est.nombre} {est.apellido}
+                        {est.riesgo_temprano && (
+                          <span className="bx-b bx-b-am" style={{ marginLeft: '8px' }} title="Tiene cuotas próximas a vencer mañana">
+                            <AlertTriangle size={10} /> Riesgo Temprano
+                          </span>
+                        )}
                       </td>
                       <td style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>
                         Ciclo {est.ciclo_actual} • <span className="bx-k">{est.edad} años</span>
                       </td>
-                      <td style={{ textAlign: 'left' }}>
-                        <div>{est.correo}</div>
-                        <span className="bx-k">{est.telefono}</span>
-                      </td>
-                      <td style={{ textAlign: 'left', minWidth: 150 }}>
+                      <td style={{ textAlign: 'left', minWidth: 140 }}>
                         <div>
                           <b>{est.promedio_notas}</b> <span className="bx-k">/ 20 ({est.porcentaje_asistencia}%)</span>
                         </div>
@@ -258,6 +319,16 @@ const Estudiantes = () => {
                           <CheckCircle2 size={11} />
                           {est.estado_universidad}
                         </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          className="bx-chip on"
+                          onClick={() => abrirHistorial(est)}
+                          title="Ver historial financiero y crediticio"
+                        >
+                          <History size={12} style={{ display: 'inline', marginRight: '4px' }} />
+                          Historial
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -287,151 +358,255 @@ const Estudiantes = () => {
             <div className="bx-li"><span>Ciclos 6 al 10</span><b>{total - ciclosBajos}</b></div>
           </div>
         </div>
-      </main>
 
-      {/* Modal Deslizable */}
-      {modalAbierto && (
-        <div className="bx-overlay">
-          <div className="bx-drawer">
-            <div className="bx-dh">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div className="bx-ico"><GraduationCap size={22} /></div>
+        {/* Modal Historial Financiero */}
+        {historialModal && (
+          <div className="bx-overlay" style={{ alignItems: 'center', justifyContent: 'center' }}>
+            <div className="bx-c" style={{ width: '90%', maxWidth: '700px', maxHeight: '85vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <div>
-                  <h2>Alta de Estudiante</h2>
-                  <p>Tabla: estudiantes</p>
+                  <h3 style={{ margin: 0 }}>Historial Crediticio del Estudiante</h3>
+                  <span className="bx-k">{historialModal.nombre} {historialModal.apellido} · DNI {historialModal.dni}</span>
                 </div>
+                <button className="bx-out" onClick={() => setHistorialModal(null)} style={{ fontSize: '18px' }}>✕</button>
               </div>
-              <button onClick={() => setModalAbierto(false)} className="bx-x" aria-label="Cerrar">
-                <X size={20} />
-              </button>
-            </div>
 
-            <div className="bx-db">
-              <form id="form-estudiante" onSubmit={handleGuardar}>
-                <div className="bx-box">
-                  <span className="bx-tt">Datos Personales</span>
-                  <div className="bx-r2">
-                    <div>
-                      <label className="bx-lbl">DNI (8 dígitos)</label>
-                      <input
-                        type="text"
-                        name="dni"
-                        required
-                        maxLength={8}
-                        value={nuevo.dni}
-                        onChange={handleChange}
-                        placeholder="72849103"
-                        className="bx-in"
-                      />
-                    </div>
-                    <div>
-                      <label className="bx-lbl">Edad</label>
-                      <input
-                        type="number"
-                        name="edad"
-                        min="18"
-                        max="50"
-                        required
-                        value={nuevo.edad}
-                        onChange={handleChange}
-                        className="bx-in"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="bx-r2">
-                    <div>
-                      <label className="bx-lbl">Nombres</label>
-                      <input
-                        type="text"
-                        name="nombre"
-                        required
-                        value={nuevo.nombre}
-                        onChange={handleChange}
-                        placeholder="MATEO"
-                        className="bx-in"
-                        style={{ textTransform: 'uppercase' }}
-                      />
-                    </div>
-                    <div>
-                      <label className="bx-lbl">Apellidos</label>
-                      <input
-                        type="text"
-                        name="apellido"
-                        required
-                        value={nuevo.apellido}
-                        onChange={handleChange}
-                        placeholder="FLORES"
-                        className="bx-in"
-                        style={{ textTransform: 'uppercase' }}
-                      />
-                    </div>
-                  </div>
+              {cargandoHistorial ? (
+                <div style={{ textAlign: 'center', padding: '40px' }}>
+                  <Loader2 size={24} className="animate-spin" style={{ margin: '0 auto' }} />
                 </div>
-
-                <div className="bx-box">
-                  <span className="bx-tt">Académico & Contacto</span>
-                  <div className="bx-r2">
+              ) : historialDatos ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', background: '#0e0e12', padding: '12px', borderRadius: '12px' }}>
                     <div>
-                      <label className="bx-lbl">Ciclo Actual (1-10)</label>
-                      <input
-                        type="number"
-                        name="ciclo_actual"
-                        min="1"
-                        max="10"
-                        required
-                        value={nuevo.ciclo_actual}
-                        onChange={handleChange}
-                        className="bx-in"
-                      />
+                      <div className="bx-k">Deuda Total Vigente</div>
+                      <div className="bx-v" style={{ fontSize: '18px', color: 'var(--bx-or)' }}>S/ {Number(historialDatos.saldo_total_vigente || 0).toFixed(2)}</div>
                     </div>
                     <div>
-                      <label className="bx-lbl">Teléfono (9 dígitos)</label>
-                      <input
-                        type="text"
-                        name="telefono"
-                        maxLength={9}
-                        value={nuevo.telefono}
-                        onChange={handleChange}
-                        placeholder="987654321"
-                        className="bx-in"
-                      />
+                      <div className="bx-k">Cuotas Vencidas</div>
+                      <div className="bx-v" style={{ fontSize: '18px', color: historialDatos.total_cuotas_vencidas > 0 ? 'var(--bx-rd)' : 'var(--bx-gr)' }}>
+                        {historialDatos.total_cuotas_vencidas || 0}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="bx-k">Promedio Académico</div>
+                      <div className="bx-v" style={{ fontSize: '18px' }}>{historialDatos.promedio || '-'}</div>
                     </div>
                   </div>
 
+                  {/* Cuotas Vencidas si existen */}
+                  {historialDatos.cuotas_vencidas_detalle && historialDatos.cuotas_vencidas_detalle.length > 0 && (
+                    <div>
+                      <h4 style={{ color: 'var(--bx-rd)', fontSize: '13px', marginBottom: '8px' }}>⚠ Cuotas Vencidas con Recargo de Mora</h4>
+                      <table className="bx-table">
+                        <thead>
+                          <tr>
+                            <th>Préstamo</th>
+                            <th>Cuota</th>
+                            <th>Vencimiento</th>
+                            <th>Monto</th>
+                            <th>Días Mora</th>
+                            <th>Recargo Mora</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historialDatos.cuotas_vencidas_detalle.map((cv) => (
+                            <tr key={cv.id_cuota}>
+                              <td>#{cv.id_prestamo}</td>
+                              <td>Cuota {cv.numero_cuota}</td>
+                              <td>{cv.fecha_vencimiento}</td>
+                              <td>S/ {Number(cv.monto_cuota || cv.monto || 0).toFixed(2)}</td>
+                              <td style={{ color: 'var(--bx-rd)', fontWeight: 700 }}>{cv.dias_mora} días</td>
+                              <td style={{ color: 'var(--bx-rd)', fontWeight: 700 }}>S/ {Number(cv.monto_mora || 0).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Lista de Eventos */}
                   <div>
-                    <label className="bx-lbl">Correo Institucional</label>
-                    <input
-                      type="email"
-                      name="correo"
-                      value={nuevo.correo}
-                      onChange={handleChange}
-                      placeholder="alumno@utp.edu.pe"
-                      className="bx-in"
-                    />
+                    <h4 style={{ fontSize: '13px', marginBottom: '8px' }}>Línea de Tiempo de Eventos Financieros</h4>
+                    {historialDatos.eventos && historialDatos.eventos.length > 0 ? (
+                      <table className="bx-table">
+                        <thead>
+                          <tr>
+                            <th>Fecha</th>
+                            <th>Evento</th>
+                            <th>Saldo Resultante</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historialDatos.eventos.map((ev) => (
+                            <tr key={ev.id_historial}>
+                              <td>{ev.fecha}</td>
+                              <td style={{ fontWeight: 600 }}>{ev.evento}</td>
+                              <td style={{ color: 'var(--bx-gr)' }}>S/ {Number(ev.saldo || 0).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="bx-k" style={{ padding: '16px', textAlign: 'center' }}>
+                        No hay eventos registrados en el historial de este estudiante.
+                      </div>
+                    )}
                   </div>
                 </div>
-              </form>
-            </div>
+              ) : null}
 
-            <div className="bx-df">
-              <button type="button" onClick={() => setModalAbierto(false)} className="bx-ghost">
-                Cancelar
-              </button>
-              <button type="submit" form="form-estudiante" disabled={cargando} className="bx-btn">
-                {cargando ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>Guardando...</span>
-                  </>
-                ) : (
-                  <span>Guardar Estudiante</span>
-                )}
-              </button>
+              <div style={{ marginTop: '16px', textAlign: 'right' }}>
+                <button className="bx-ghost" onClick={() => setHistorialModal(null)}>Cerrar</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Modal Alta de Estudiante */}
+        {modalAbierto && (
+          <div className="bx-overlay">
+            <div className="bx-drawer">
+              <div className="bx-dh">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div className="bx-ico"><GraduationCap size={22} /></div>
+                  <div>
+                    <h2>Alta de Estudiante</h2>
+                    <p>Tabla: estudiantes</p>
+                  </div>
+                </div>
+                <button onClick={() => setModalAbierto(false)} className="bx-x" aria-label="Cerrar">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="bx-db">
+                <form id="form-estudiante" onSubmit={handleGuardar}>
+                  <div className="bx-box">
+                    <span className="bx-tt">Datos Personales</span>
+                    <div className="bx-r2">
+                      <div>
+                        <label className="bx-lbl">DNI (8 dígitos)</label>
+                        <input
+                          type="text"
+                          name="dni"
+                          required
+                          maxLength={8}
+                          value={nuevo.dni}
+                          onChange={handleChange}
+                          placeholder="72849103"
+                          className="bx-in"
+                        />
+                      </div>
+                      <div>
+                        <label className="bx-lbl">Edad</label>
+                        <input
+                          type="number"
+                          name="edad"
+                          min="18"
+                          max="50"
+                          required
+                          value={nuevo.edad}
+                          onChange={handleChange}
+                          className="bx-in"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bx-r2">
+                      <div>
+                        <label className="bx-lbl">Nombres</label>
+                        <input
+                          type="text"
+                          name="nombre"
+                          required
+                          value={nuevo.nombre}
+                          onChange={handleChange}
+                          placeholder="MATEO"
+                          className="bx-in"
+                          style={{ textTransform: 'uppercase' }}
+                        />
+                      </div>
+                      <div>
+                        <label className="bx-lbl">Apellidos</label>
+                        <input
+                          type="text"
+                          name="apellido"
+                          required
+                          value={nuevo.apellido}
+                          onChange={handleChange}
+                          placeholder="FLORES"
+                          className="bx-in"
+                          style={{ textTransform: 'uppercase' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bx-box">
+                    <span className="bx-tt">Académico & Contacto</span>
+                    <div className="bx-r2">
+                      <div>
+                        <label className="bx-lbl">Ciclo Actual (1-10)</label>
+                        <input
+                          type="number"
+                          name="ciclo_actual"
+                          min="1"
+                          max="10"
+                          required
+                          value={nuevo.ciclo_actual}
+                          onChange={handleChange}
+                          className="bx-in"
+                        />
+                      </div>
+                      <div>
+                        <label className="bx-lbl">Teléfono (9 dígitos)</label>
+                        <input
+                          type="text"
+                          name="telefono"
+                          maxLength={9}
+                          value={nuevo.telefono}
+                          onChange={handleChange}
+                          placeholder="987654321"
+                          className="bx-in"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="bx-lbl">Correo Institucional</label>
+                      <input
+                        type="email"
+                        name="correo"
+                        value={nuevo.correo}
+                        onChange={handleChange}
+                        placeholder="alumno@utp.edu.pe"
+                        className="bx-in"
+                      />
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div className="bx-df">
+                <button type="button" onClick={() => setModalAbierto(false)} className="bx-ghost">
+                  Cancelar
+                </button>
+                <button type="submit" form="form-estudiante" disabled={cargando} className="bx-btn">
+                  {cargando ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Guardando...</span>
+                    </>
+                  ) : (
+                    <span>Guardar Estudiante</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 };

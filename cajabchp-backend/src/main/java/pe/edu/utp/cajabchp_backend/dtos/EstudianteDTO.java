@@ -37,4 +37,7 @@ public class EstudianteDTO {
 
     @JsonProperty("fecha_registro")
     private LocalDate fechaRegistro;
+
+    @JsonProperty("riesgo_temprano")
+    private Boolean riesgoTemprano;
 }

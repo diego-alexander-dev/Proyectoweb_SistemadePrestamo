@@ -1,6 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
-import { getPrestamos, putPrestamo } from '../services/api';
+import {
+  getPrestamos,
+  getMoraPreview,
+  postAplicarMora,
+  exportReporteMorosidadCsv,
+  BACKEND_ACTIVO
+} from '../services/api';
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -9,7 +15,8 @@ import {
   X,
   Inbox,
   Wallet,
-  Users
+  Users,
+  Download
 } from 'lucide-react';
 
 const soles = (n) => `S/. ${Number(n || 0).toFixed(2)}`;
@@ -33,12 +40,6 @@ const COLOR_ESTADO = { 'AL DIA': '#34d399', VENCIDO: '#fbbf24', MOROSO: '#fb923c
 const COLOR_RIESGO = { BAJO: '#34d399', MEDIO: '#fbbf24', ALTO: '#fb923c', CRITICO: '#fb7185' };
 
 // ===== Criterios de orden (idéntico a valorComparacion) =====
-// NOTA: se conserva tal cual el comportamiento del sistema original, incluyendo
-// dos particularidades heredadas de RegistroPrestamos/Controlmorosidad.java:
-//  - "Nombre" solo compara la PRIMERA LETRA del nombre (no el nombre completo).
-//  - "Fecha de inicio" no ordena nada: el switch original cae al "default: return 0".
-// Si quieres que se corrijan, dímelo y las ajusto — se dejaron así para no
-// modificar la funcionalidad heredada sin tu autorización.
 const criterioValor = (p, criterio) => {
   switch (criterio) {
     case 0: return -Number(p.saldo || 0); // Mayor deuda primero
@@ -144,32 +145,51 @@ const aplicarOrden = (arr, criterio, algoritmo) => {
 
 const Morosidad = () => {
   const [prestamos, setPrestamos] = useState([
-    { id_prestamo: 1, estudiante: 'DIEGO HUACHACA', dni: '12345678', monto: 5000, saldo: 5500, dias_mora: 0, interes_mora: 0, estado: 'Activo', fecha_inicio: '2026-09-02' },
-    { id_prestamo: 2, estudiante: 'DIANA APOLINARIO', dni: '87654321', monto: 2000, saldo: 2200, dias_mora: 8, interes_mora: 15.5, estado: 'Activo', fecha_inicio: '2026-08-28' },
-    { id_prestamo: 3, estudiante: 'EDUARDO CAMAC', dni: '11223344', monto: 1500, saldo: 1600, dias_mora: 20, interes_mora: 40.0, estado: 'Activo', fecha_inicio: '2026-07-15' },
-    { id_prestamo: 4, estudiante: 'EDUARDO CAMAC', dni: '11223344', monto: 900, saldo: 950, dias_mora: 34, interes_mora: 65.0, estado: 'Activo', fecha_inicio: '2026-06-20' },
-    { id_prestamo: 5, estudiante: 'VALERIA GUTIERREZ', dni: '88776655', monto: 5000, saldo: 4800, dias_mora: 45, interes_mora: 120.0, estado: 'Activo', fecha_inicio: '2026-05-10' },
-    { id_prestamo: 6, estudiante: 'MARIA QUISPE', dni: '99887766', monto: 3000, saldo: 3100, dias_mora: 0, interes_mora: 0, estado: 'Activo', fecha_inicio: '2026-09-05' }
+    { id_prestamo: 1, estudiante_nombre: 'DIEGO HUACHACA', dni: '12345678', monto: 5000, saldo: 5500, dias_mora: 0, interes_mora: 0, estado: 'Activo', fecha_inicio: '2026-09-02' },
+    { id_prestamo: 2, estudiante_nombre: 'DIANA APOLINARIO', dni: '87654321', monto: 2000, saldo: 2200, dias_mora: 8, interes_mora: 15.5, estado: 'Activo', fecha_inicio: '2026-08-28' },
+    { id_prestamo: 3, estudiante_nombre: 'EDUARDO CAMAC', dni: '11223344', monto: 1500, saldo: 1600, dias_mora: 20, interes_mora: 40.0, estado: 'Activo', fecha_inicio: '2026-07-15' },
+    { id_prestamo: 4, estudiante_nombre: 'EDUARDO CAMAC', dni: '11223344', monto: 900, saldo: 950, dias_mora: 34, interes_mora: 65.0, estado: 'Activo', fecha_inicio: '2026-06-20' },
+    { id_prestamo: 5, estudiante_nombre: 'VALERIA GUTIERREZ', dni: '88776655', monto: 5000, saldo: 4800, dias_mora: 45, interes_mora: 120.0, estado: 'Activo', fecha_inicio: '2026-05-10' },
+    { id_prestamo: 6, estudiante_nombre: 'MARIA QUISPE', dni: '99887766', monto: 3000, saldo: 3100, dias_mora: 0, interes_mora: 0, estado: 'Activo', fecha_inicio: '2026-09-05' }
   ]);
 
   const [vista, setVista] = useState(0); // 0 Activas, 1 Vencidas, 2 Estudiantes Morosos
   const [criterio, setCriterio] = useState(0);
   const [algoritmo, setAlgoritmo] = useState(0);
-  const [orden, setOrden] = useState(null); // guarda el último orden aplicado hasta que se pida otro
+  const [orden, setOrden] = useState(null);
   const [estadoLbl, setEstadoLbl] = useState('');
-  const [cola, setCola] = useState([]); // Colamorosidad: [{idPrestamo, nombreEstudiante, mensaje}]
+  const [cola, setCola] = useState([]);
   const [toast, setToast] = useState(null);
-  const [moraModal, setMoraModal] = useState(null); // { prestamo, dias, paso }
+  const [moraModal, setMoraModal] = useState(null); // { prestamo, cuotas_vencidas, dias_mora_maximo, mora_total_a_aplicar, detalle_cuotas }
   const [colaAbierta, setColaAbierta] = useState(false);
-  const selRef = useRef(null); // fila seleccionada para Aplicar Mora / Notificar
+  const selRef = useRef(null);
+
+  const cargarPrestamos = async () => {
+    try {
+      const r = await getPrestamos();
+      if (r.data && r.data.length > 0) setPrestamos(r.data);
+    } catch (e) {
+      if (BACKEND_ACTIVO) {
+        const msg = e.response?.data?.message || 'Error al conectar con el servidor';
+        setToast({ tipo: 'error', texto: msg });
+      }
+    }
+  };
 
   useEffect(() => {
+    let cancelado = false;
     (async () => {
       try {
         const r = await getPrestamos();
-        if (r.data && r.data.length > 0) setPrestamos(r.data);
-      } catch (e) { void e; }
+        if (!cancelado && r.data && r.data.length > 0) setPrestamos(r.data);
+      } catch (e) {
+        if (!cancelado && BACKEND_ACTIVO) {
+          const msg = e.response?.data?.message || 'Error al conectar con el servidor';
+          setToast({ tipo: 'error', texto: msg });
+        }
+      }
     })();
+    return () => { cancelado = true; };
   }, []);
 
   useEffect(() => {
@@ -178,8 +198,11 @@ const Morosidad = () => {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // ===== cargarPrestamos / cargarEstudiantesMorosos =====
-  const deudasActivas = useMemo(() => prestamos.filter((p) => p.estado === 'Activo' && p.saldo > 0), [prestamos]);
+  // ===== deudasActivas incluye "Activo" y "Riesgo Temprano" =====
+  const deudasActivas = useMemo(
+    () => prestamos.filter((p) => (p.estado === 'Activo' || p.estado === 'Riesgo Temprano') && p.saldo > 0),
+    [prestamos]
+  );
   const deudasVencidas = useMemo(() => deudasActivas.filter((p) => p.dias_mora > 0), [deudasActivas]);
 
   const estudiantesMorosos = useMemo(() => {
@@ -198,21 +221,15 @@ const Morosidad = () => {
   const filasBase = vista === 0 ? deudasActivas : vista === 1 ? deudasVencidas : estudiantesMorosos;
 
   const filas = useMemo(() => {
-    if (vista === 2) return filasBase; // la vista agrupada no se reordena con estos controles
+    if (vista === 2) return filasBase;
     if (!orden) return filasBase;
     return aplicarOrden(filasBase, orden.criterio, orden.algoritmo);
   }, [filasBase, orden, vista]);
 
-  // ===== KPIs para el nuevo panel superior =====
+  // ===== KPIs =====
   const totalEnMora = deudasVencidas.reduce((s, p) => s + (Number(p.saldo) || 0), 0);
   const criticos = deudasVencidas.filter((p) => calcularNivelRiesgo(p.dias_mora, p.saldo) === 'CRITICO').length;
 
-  // ===== Cambiar de vista =====
-  // Antes esto vivía en un useEffect([vista]) que hacía setState de forma
-  // síncrona al montar/cambiar "vista" -> disparaba react-hooks/set-state-in-effect.
-  // El reseteo de orden/estadoLbl/selRef es una reacción directa al clic del
-  // usuario, no una sincronización con algo externo, así que se ejecuta aquí
-  // mismo en el handler del tab (mismo patrón usado en Monitoreo.jsx).
   const cambiarVista = (i) => {
     setVista(i);
     setOrden(null);
@@ -220,7 +237,6 @@ const Morosidad = () => {
     selRef.current = null;
   };
 
-  // ===== Ordenar =====
   const ordenar = () => {
     if (vista === 2) {
       setToast({ tipo: 'warn', texto: 'La vista "Estudiantes Morosos" no admite reordenamiento manual.' });
@@ -231,20 +247,99 @@ const Morosidad = () => {
     setEstadoLbl(`Ordenado por: ${CRITERIOS[criterio]} usando ${ALGORITMOS[algoritmo]}`);
   };
 
-  // ===== Aplicar Mora =====
-  const abrirMora = (p) => setMoraModal({ prestamo: p, dias: p.dias_mora || 0 });
+  // ===== Aplicar Mora vía Servidor =====
+  const abrirMora = async (p) => {
+    if (BACKEND_ACTIVO) {
+      try {
+        const previewRes = await getMoraPreview(p.id_prestamo);
+        const data = previewRes.data;
+        setMoraModal({
+          prestamo: p,
+          cuotas_vencidas: data.cuotas_vencidas,
+          dias_mora_maximo: data.dias_mora_maximo,
+          mora_total_a_aplicar: data.mora_total_a_aplicar,
+          detalle_cuotas: data.detalle_cuotas || []
+        });
+      } catch (err) {
+        const msg = err.response?.data?.message || 'Error al obtener vista previa de mora';
+        setToast({ tipo: 'error', texto: msg });
+      }
+    } else {
+      // Modo desconectado local
+      const recargoLocal = p.saldo * 0.02;
+      setMoraModal({
+        prestamo: p,
+        cuotas_vencidas: p.dias_mora > 0 ? 1 : 0,
+        dias_mora_maximo: p.dias_mora || 0,
+        mora_total_a_aplicar: recargoLocal,
+        detalle_cuotas: []
+      });
+    }
+  };
+
   const confirmarMora = async () => {
-    const { prestamo, dias } = moraModal;
-    const recargo = prestamo.saldo * 0.02;
-    const nuevoSaldo = prestamo.saldo + recargo;
+    if (!moraModal) return;
+    const { prestamo } = moraModal;
 
-    setPrestamos((prev) =>
-      prev.map((p) => (p.id_prestamo === prestamo.id_prestamo ? { ...p, saldo: nuevoSaldo, dias_mora: dias, interes_mora: recargo } : p))
-    );
-    try { await putPrestamo(prestamo.id_prestamo, { saldo: nuevoSaldo, dias_mora: dias, interes_mora: recargo }); } catch (e) { void e; }
+    if (BACKEND_ACTIVO) {
+      try {
+        const res = await postAplicarMora(prestamo.id_prestamo);
+        const { cuotas_afectadas, monto_mora_aplicado } = res.data;
+        setToast({
+          tipo: 'ok',
+          texto: `Mora aplicada con éxito: S/. ${Number(monto_mora_aplicado).toFixed(2)} sobre ${cuotas_afectadas} cuota(s).`
+        });
+        setMoraModal(null);
+        await cargarPrestamos();
+      } catch (e) {
+        const msg = e.response?.data?.message || 'No se pudo aplicar la mora en el servidor';
+        setToast({ tipo: 'error', texto: msg });
+        setMoraModal(null);
+      }
+    } else {
+      const recargo = prestamo.saldo * 0.02;
+      const nuevoSaldo = prestamo.saldo + recargo;
+      setPrestamos((prev) =>
+        prev.map((p) => (p.id_prestamo === prestamo.id_prestamo ? { ...p, saldo: nuevoSaldo, interes_mora: recargo } : p))
+      );
+      setMoraModal(null);
+      setToast({ tipo: 'ok', texto: `Mora aplicada a ${prestId(prestamo.id_prestamo)}. Nuevo saldo: ${soles(nuevoSaldo)}` });
+    }
+  };
 
-    setMoraModal(null);
-    setToast({ tipo: 'ok', texto: `Mora aplicada a ${prestId(prestamo.id_prestamo)}. Nuevo saldo: ${soles(nuevoSaldo)}` });
+  // ===== Exportar CSV de morosidad =====
+  const descargarCsv = async () => {
+    if (BACKEND_ACTIVO) {
+      try {
+        const res = await exportReporteMorosidadCsv();
+        const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', 'reporte_morosidad.csv');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        setToast({ tipo: 'ok', texto: 'Reporte CSV de morosidad exportado exitosamente.' });
+      } catch (e) {
+        const msg = e.response?.data?.message || 'Error al exportar el reporte CSV';
+        setToast({ tipo: 'error', texto: msg });
+      }
+    } else {
+      // Fallback local
+      const csvHeader = 'ID,Estudiante,DNI,Monto,Saldo,Dias Mora,Interes Mora,Estado\n';
+      const csvRows = deudasVencidas.map(p => `${p.id_prestamo},"${p.estudiante_nombre}",${p.dni},${p.monto},${p.saldo},${p.dias_mora},${p.interes_mora},${p.estado}`).join('\n');
+      const blob = new Blob([csvHeader + csvRows], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'reporte_morosidad_local.csv');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setToast({ tipo: 'ok', texto: 'Reporte local generado.' });
+    }
   };
 
   // ===== Notificar (encolar FIFO) =====
@@ -279,10 +374,15 @@ const Morosidad = () => {
             <h1>Control de morosidad</h1>
             <span>Clasificación de riesgo, mora y cobranza</span>
           </div>
-          <button className="bx-btn" onClick={() => setColaAbierta(true)} style={{ position: 'relative' }}>
-            <Inbox size={16} /> Cola de notificaciones
-            {cola.length > 0 && <span className="mor-badge-count">{cola.length}</span>}
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="bx-btn" onClick={descargarCsv}>
+              <Download size={16} /> Exportar reporte (CSV)
+            </button>
+            <button className="bx-ghost" onClick={() => setColaAbierta(true)} style={{ position: 'relative' }}>
+              <Inbox size={16} /> Cola de notificaciones
+              {cola.length > 0 && <span className="mor-badge-count">{cola.length}</span>}
+            </button>
+          </div>
         </div>
 
         <div className="mor-kpis">
@@ -389,23 +489,36 @@ const Morosidad = () => {
         <div className="bx-overlay" onClick={() => setMoraModal(null)}>
           <div className="sol-modal" onClick={(e) => e.stopPropagation()}>
             <button className="bx-x" onClick={() => setMoraModal(null)} aria-label="Cerrar"><X size={18} /></button>
-            <h3 style={{ marginTop: 0 }}>Aplicar mora</h3>
+            <h3 style={{ marginTop: 0 }}>Aplicar mora de servidor</h3>
             <p className="bx-k">{prestId(moraModal.prestamo.id_prestamo)} · {moraModal.prestamo.estudiante_nombre}</p>
 
-            <label className="bx-lbl">Días de retraso</label>
-            <input
-              type="number" min="0" className="bx-in"
-              value={moraModal.dias}
-              onChange={(e) => setMoraModal((m) => ({ ...m, dias: Math.max(0, Number(e.target.value)) }))}
-            />
+            {moraModal.cuotas_vencidas === 0 ? (
+              <div style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', padding: 14, borderRadius: 10, color: '#fbbf24', fontSize: 13, margin: '14px 0' }}>
+                Este préstamo no tiene cuotas vencidas pendientes de mora. El servidor no generará recargos.
+              </div>
+            ) : (
+              <div className="mor-mora-preview">
+                <div><span>Cuotas vencidas detectadas</span><b style={{ color: '#fb7185' }}>{moraModal.cuotas_vencidas} cuota(s)</b></div>
+                <div><span>Días máximos de mora</span><b>{moraModal.dias_mora_maximo} día(s)</b></div>
+                <div><span>Saldo actual del préstamo</span><b>{soles(moraModal.prestamo.saldo)}</b></div>
+                <div><span>Mora monetaria calculada (2%)</span><b style={{ color: 'var(--bx-or)' }}>{soles(moraModal.mora_total_a_aplicar)}</b></div>
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 6, marginTop: 4 }}>
+                  <span>Nuevo saldo estimado</span>
+                  <b style={{ color: 'var(--bx-or)', fontSize: 14 }}>
+                    {soles(Number(moraModal.prestamo.saldo) + Number(moraModal.mora_total_a_aplicar || 0))}
+                  </b>
+                </div>
+              </div>
+            )}
 
-            <div className="mor-mora-preview">
-              <div><span>Saldo actual</span><b>{soles(moraModal.prestamo.saldo)}</b></div>
-              <div><span>Recargo (2%)</span><b>{soles(moraModal.prestamo.saldo * 0.02)}</b></div>
-              <div><span>Nuevo saldo</span><b style={{ color: 'var(--bx-or)' }}>{soles(moraModal.prestamo.saldo * 1.02)}</b></div>
-            </div>
-
-            <button className="bx-btn" style={{ width: '100%', marginTop: 14 }} onClick={confirmarMora}>Confirmar aplicación de mora</button>
+            <button
+              className="bx-btn"
+              style={{ width: '100%', marginTop: 14 }}
+              disabled={moraModal.cuotas_vencidas === 0}
+              onClick={confirmarMora}
+            >
+              Confirmar aplicación de mora
+            </button>
           </div>
         </div>
       )}

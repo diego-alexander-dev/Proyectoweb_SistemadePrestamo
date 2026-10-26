@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
-import { getEstudiantes, getPrestamos } from '../services/api';
+import { getEstudiantes, getPrestamos, BACKEND_ACTIVO } from '../services/api';
 import { ShieldAlert, ShieldCheck, Siren, Undo2, Ban, TrendingDown, TrendingUp, PieChart } from 'lucide-react';
 
 // ===== Estructuras equivalentes a las internas de VentanaMonitoreo.java =====
@@ -32,20 +32,28 @@ const FILTROS = [
 const soles = (n) => `S/. ${Number(n || 0).toFixed(2)}`;
 
 const Monitoreo = () => {
-  const [estudiantes, setEstudiantes] = useState([
-    { id_estudiante: 1, nombre: 'DIEGO', apellido: 'HUACHACA', promedio_notas: 16.5, porcentaje_asistencia: 92.0, estado_universidad: 'ACTIVO' },
-    { id_estudiante: 2, nombre: 'DIANA', apellido: 'APOLINARIO', promedio_notas: 14.0, porcentaje_asistencia: 85.0, estado_universidad: 'ACTIVO' },
-    { id_estudiante: 3, nombre: 'EDUARDO', apellido: 'CAMAC', promedio_notas: 10.0, porcentaje_asistencia: 65.0, estado_universidad: 'ALERTA' },
-    { id_estudiante: 4, nombre: 'MARIA', apellido: 'QUISPE', promedio_notas: 18.0, porcentaje_asistencia: 98.0, estado_universidad: 'ACTIVO' },
-    { id_estudiante: 10, nombre: 'VALERIA', apellido: 'GUTIERREZ', promedio_notas: 9.0, porcentaje_asistencia: 50.0, estado_universidad: 'RETIRADO' }
-  ]);
+  const [estudiantes, setEstudiantes] = useState(
+    BACKEND_ACTIVO
+      ? []
+      : [
+          { id_estudiante: 1, nombre: 'DIEGO', apellido: 'HUACHACA', promedio_notas: 16.5, porcentaje_asistencia: 92.0, estado_universidad: 'ACTIVO' },
+          { id_estudiante: 2, nombre: 'DIANA', apellido: 'APOLINARIO', promedio_notas: 14.0, porcentaje_asistencia: 85.0, estado_universidad: 'ACTIVO' },
+          { id_estudiante: 3, nombre: 'EDUARDO', apellido: 'CAMAC', promedio_notas: 10.0, porcentaje_asistencia: 65.0, estado_universidad: 'ALERTA' },
+          { id_estudiante: 4, nombre: 'MARIA', apellido: 'QUISPE', promedio_notas: 18.0, porcentaje_asistencia: 98.0, estado_universidad: 'ACTIVO' },
+          { id_estudiante: 10, nombre: 'VALERIA', apellido: 'GUTIERREZ', promedio_notas: 9.0, porcentaje_asistencia: 50.0, estado_universidad: 'RETIRADO' }
+        ]
+  );
 
-  const [prestamos, setPrestamos] = useState([
-    { id_prestamo: 1, id_estudiante: 1, monto: 5000.0, cuotas: 12, tasa_interes: 10.0, saldo: 5500.0, estado: 'Activo' },
-    { id_prestamo: 2, id_estudiante: 1, monto: 1000.0, cuotas: 3, tasa_interes: 10.0, saldo: 1100.0, estado: 'Activo' },
-    { id_prestamo: 3, id_estudiante: 2, monto: 2000.0, cuotas: 6, tasa_interes: 10.0, saldo: 2200.0, estado: 'Activo' },
-    { id_prestamo: 10, id_estudiante: 10, monto: 5000.0, cuotas: 12, tasa_interes: 10.0, saldo: 800.0, estado: 'Activo' }
-  ]);
+  const [prestamos, setPrestamos] = useState(
+    BACKEND_ACTIVO
+      ? []
+      : [
+          { id_prestamo: 1, id_estudiante: 1, monto: 5000.0, cuotas: 12, tasa_interes: 10.0, saldo: 5500.0, estado: 'Activo' },
+          { id_prestamo: 2, id_estudiante: 1, monto: 1000.0, cuotas: 3, tasa_interes: 10.0, saldo: 1100.0, estado: 'Activo' },
+          { id_prestamo: 3, id_estudiante: 2, monto: 2000.0, cuotas: 6, tasa_interes: 10.0, saldo: 2200.0, estado: 'Activo' },
+          { id_prestamo: 10, id_estudiante: 10, monto: 5000.0, cuotas: 12, tasa_interes: 10.0, saldo: 800.0, estado: 'Activo' }
+        ]
+  );
 
   useEffect(() => {
     (async () => {
@@ -119,7 +127,7 @@ const Monitoreo = () => {
   // ===== Gráfico BI: saldo activo agrupado por estado_universidad =====
   const barras = (() => {
     const mapa = new Map();
-    filas.filter((f) => f.estado === 'Activo').forEach((f) => {
+    filas.filter((f) => f.estado === 'Activo' || f.estado === 'Riesgo Temprano').forEach((f) => {
       mapa.set(f.estadoMatricula, (mapa.get(f.estadoMatricula) || 0) + f.saldo);
     });
     return Array.from(mapa.entries()).map(([estado, saldo]) => ({ estado, saldo }));

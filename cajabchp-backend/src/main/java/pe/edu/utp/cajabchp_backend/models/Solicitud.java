@@ -8,7 +8,7 @@ import java.time.LocalDate;
 import java.util.Objects;
 
 @Entity
-@Table(name = "solicitudes_prestamo")
+@Table(name = "solicitudes")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -25,16 +25,16 @@ public class Solicitud {
     @JoinColumn(name = "id_estudiante", nullable = false)
     private Estudiante estudiante;
 
-    @Column(name = "monto_solicitado", nullable = false, precision = 10, scale = 2)
+    @Column(name = "monto_solicitado", nullable = false, precision = 12, scale = 2)
     private BigDecimal montoSolicitado;
 
     @Column(name = "cuotas_solicitadas", nullable = false)
     private Integer cuotasSolicitadas;
 
-    @Column(name = "estado_solicitud", nullable = false, length = 20)
+    @Column(name = "estado_solicitud", nullable = false, length = 30)
     private String estadoSolicitud;
 
-    @Column(name = "recomendacion_sistema", length = 30)
+    @Column(name = "recomendacion_sistema", length = 200)
     private String recomendacionSistema;
 
     @Column(name = "observacion", length = 255)
@@ -45,6 +45,16 @@ public class Solicitud {
 
     @Column(name = "fecha_solicitud")
     private LocalDate fechaSolicitud;
+
+    @PrePersist
+    public void prePersist() {
+        if (this.fechaSolicitud == null) {
+            this.fechaSolicitud = LocalDate.now();
+        }
+        if (this.estadoSolicitud == null) {
+            this.estadoSolicitud = "PENDIENTE";
+        }
+    }
 
     @Override
     public boolean equals(Object o) {

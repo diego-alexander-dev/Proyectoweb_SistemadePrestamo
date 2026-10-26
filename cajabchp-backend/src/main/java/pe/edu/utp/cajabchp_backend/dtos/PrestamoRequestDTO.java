@@ -32,7 +32,8 @@ public class PrestamoRequestDTO {
     @DecimalMin(value = "0.00", message = "La tasa no puede ser negativa")
     private BigDecimal tasaInteres;
 
-    @NotNull(message = "El saldo inicial es obligatorio")
-    @DecimalMin(value = "0.00", message = "El saldo no puede ser negativo")
+    @JsonProperty("fecha_inicio")
+    private java.time.LocalDate fechaInicio;
+
     private BigDecimal saldo;
 }
